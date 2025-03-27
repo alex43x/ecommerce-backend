@@ -93,3 +93,18 @@ export const deleteProduct = async (req, res, next) => {
     next(error);
   }
 };
+
+export const getTopSellingProducts = async (req, res) => {
+  try {
+    const products = await Product.aggregate([
+      { $lookup: { from: "sales", localField: "_id", foreignField: "items.product", as: "sales_info" } },
+      { $addFields: { salesCount: { $size: "$sales_info" } } },
+      { $sort: { salesCount: -1 } },
+      { $limit: 10 }
+    ]);
+    
+    res.status(200).json(products);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
