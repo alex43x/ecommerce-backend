@@ -1,7 +1,7 @@
 import User from '../models/users.js';
 
 // Login
-export const loginUser = async (req, res) => {
+export const loginUser = async (req, res,next) => {
   const { email, password } = req.body;
 
   try {
@@ -22,14 +22,14 @@ export const loginUser = async (req, res) => {
       token
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // CRUD de usuarios
 
 // Crear un usuario
-export const createUser = async (req, res) => {
+export const createUser = async (req, res,next) => {
   const { name, email, password, role } = req.body;
 
   try {
@@ -37,22 +37,22 @@ export const createUser = async (req, res) => {
     await user.save();
     res.status(201).json({ message: 'User created successfully', user });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    next(error);
   }
 };
 
 // Obtener todos los usuarios
-export const getUsers = async (req, res) => {
+export const getUsers = async (req, res,next) => {
   try {
     const users = await User.find();
     res.status(200).json(users);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Obtener un usuario por su ID
-export const getUserById = async (req, res) => {
+export const getUserById = async (req, res,next) => {
   const { id } = req.params;
 
   try {
@@ -62,12 +62,12 @@ export const getUserById = async (req, res) => {
     }
     res.status(200).json(user);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Actualizar un usuario
-export const updateUser = async (req, res) => {
+export const updateUser = async (req, res, next) => {
   const { id } = req.params;
   const { name, email, password, role } = req.body;
 
@@ -87,12 +87,12 @@ export const updateUser = async (req, res) => {
     await user.save();
     res.status(200).json({ message: 'User updated successfully', user });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Eliminar un usuario
-export const deleteUser = async (req, res) => {
+export const deleteUser = async (req, res,next) => {
   const { id } = req.params;
 
   try {
@@ -102,6 +102,6 @@ export const deleteUser = async (req, res) => {
     }
     res.status(200).json({ message: 'User deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };

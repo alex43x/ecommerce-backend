@@ -1,7 +1,7 @@
 import Payment from '../models/payments.js';
 
 // Crear un pago
-export const createPayment = async (req, res) => {
+export const createPayment = async (req, res, next) => {
   const { saleId, paymentmethod, amount } = req.body;
 
   try {
@@ -9,22 +9,22 @@ export const createPayment = async (req, res) => {
     await payment.save();
     res.status(201).json({ message: 'Payment created successfully', payment });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    next(error);
   }
 };
 
 // Obtener todos los pagos
-export const getPayments = async (req, res) => {
+export const getPayments = async (req, res, next) => {
   try {
     const payments = await Payment.find();
     res.status(200).json(payments);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Obtener un pago por ID
-export const getPaymentById = async (req, res) => {
+export const getPaymentById = async (req, res, next) => {
   const { id } = req.params;
 
   try {
@@ -34,12 +34,12 @@ export const getPaymentById = async (req, res) => {
     }
     res.status(200).json(payment);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Actualizar un pago
-export const updatePayment = async (req, res) => {
+export const updatePayment = async (req, res, next) => {
   const { id } = req.params;
   const { saleId, paymentmethod, amount } = req.body;
 
@@ -56,12 +56,12 @@ export const updatePayment = async (req, res) => {
     await payment.save();
     res.status(200).json({ message: 'Payment updated successfully', payment });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Eliminar un pago
-export const deletePayment = async (req, res) => {
+export const deletePayment = async (req, res, next) => {
   const { id } = req.params;
 
   try {
@@ -71,6 +71,6 @@ export const deletePayment = async (req, res) => {
     }
     res.status(200).json({ message: 'Payment deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
