@@ -42,8 +42,8 @@ userSchema.methods.matchPassword = async function(enteredPassword) {
 
 // generar JWT
 userSchema.methods.generateToken = function() {
-  const token = jwt.sign({ id: this._id, email:this.email, role: this.role }, process.env.JWT_SECRET, {
-    expiresIn: '1h' // El token expirará en 1 hora
+  const token = jwt.sign({ id: this._id, name:this.name, email:this.email, role: this.role }, process.env.JWT_SECRET, {
+    expiresIn: '12h' // El token expirará en 1 hora
   });
   return token;
 };

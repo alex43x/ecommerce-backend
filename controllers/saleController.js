@@ -1,20 +1,48 @@
 import Sale from '../models/sales.js';
-// Crear una venta
-export const createSale = async (req, res, next) => {
-  const { user, items, total, type } = req.body;
+import { v4 as uuidv4 } from 'uuid';
 
+// Crear una nueva venta
+export const createSale = async (req, res) => {
   try {
-    const sale = new Sale({ user, items, total, type });
-    await sale.save();
-    res.status(201).json({ message: 'Sale created successfully', sale });
+    const { products, paymentMethod, user } = req.body;
+
+    // Verificar si los productos fueron enviados
+    if (!products || products.length === 0) {
+      return res.status(400).json({ message: 'Debe incluir al menos un producto en la venta.' });
+    }
+
+    // Calcular el totalAmount sumando el total de cada producto
+    let totalAmount = 0;
+    products.forEach(product => {
+      totalAmount += product.totalPrice;  // Asumimos que `totalPrice` ya incluye cantidad * precio unitario
+    });
+
+    // Generar un saleId único
+    const saleId = uuidv4();
+
+    // Crear una nueva venta
+    const newSale = new Sale({
+      saleId,
+      products,
+      totalAmount,  // Total de todos los productos
+      paymentMethod,
+      user
+    });
+
+    // Guardar la venta en la base de datos
+    await newSale.save();
+
+    // Responder con la venta creada
+    res.status(201).json(newSale);
   } catch (error) {
-    next(error);
+    res.status(500).json({ message: error.message });
   }
 };
 
+
 // Obtener todas las ventas
 export const getSales = async (req, res) => {
-  const { page = 1, limit = 10, user } = req.query;  // Valores por defecto para paginación
+  const { page = 1, limit = 10, user } = req.query; // Valores por defecto para paginación
 
   try {
     // Construir la consulta de filtro
@@ -24,16 +52,27 @@ export const getSales = async (req, res) => {
     // Calcular el número de documentos a omitir para la paginación
     const skip = (page - 1) * limit;
 
-    // Obtener las ventas de la base de datos con paginación
-    const sales = await Sale.find(query)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .exec();
+    // Agregación para agrupar por saleId
+    const sales = await Sale.aggregate([
+      { $match: query }, // Filtrar las ventas por usuario u otros parámetros
+      { $skip: skip }, // Omite los primeros 'skip' elementos (paginación)
+      { $limit: parseInt(limit) }, // Limita la cantidad de ventas a 'limit'
+      {
+        $group: {
+          _id: "$saleId", // Agrupar por saleId
+          totalAmount: { $sum: "$totalAmount" }, // Sumar los montos totales
+          status: { $first: "$status" }, // Obtener el primer estado de la venta (suponiendo que sea el mismo para todos)
+          customer: { $first: "$customer" }, // Obtener los primeros datos del cliente
+          items: { $push: "$items" }, // Agregar los productos/ítems de la venta en un array
+        }
+      },
+      { $sort: { "_id": 1 } } // Ordenar los resultados por saleId (puedes cambiarlo si es necesario)
+    ]);
 
     // Obtener el total de ventas para calcular el total de páginas
     const totalSales = await Sale.countDocuments(query);
 
-    // Responder con las ventas y la información de paginación
+    // Responder con las ventas agrupadas y la información de paginación
     res.status(200).json({
       sales,
       totalSales,
@@ -45,6 +84,7 @@ export const getSales = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 // Obtener una venta por ID
 export const getSaleById = async (req, res, next) => {

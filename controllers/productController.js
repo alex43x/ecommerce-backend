@@ -17,10 +17,10 @@ export const getProducts = async (req, res) => {
   const { page = 1, limit = 10, category, search, sortBy } = req.query;  // Valores por defecto si no se pasan parámetros
 
   try {
-    // Construir la consulta de filtro
+    // Construccion de la consulta de filtro
     const query = {};
     if (category) query.category = category; // Filtrar por categoría
-    if (search) query.name = { $regex: search, $options: 'i' }; // Búsqueda por nombre (case-insensitive)
+    if (search) query.name = { $regex: search, $options: 'i' }; // Búsqueda por nombre 
 
     // Ordenar
     let sort = {};
