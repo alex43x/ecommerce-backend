@@ -1,5 +1,5 @@
 import express from 'express';
-import { createSale, getSales, getSaleById, updateSale, deleteSale, getSalesReport, getSalesByProduct, getSalesByPaymentMethod, getSalesByStatus } from '../controllers/saleController.js';
+import { createSale, getSales, getSaleById, updateSale, deleteSale, getSalesReport, getSalesByProduct, getSalesByPaymentMethod, getSalesByStatus,updateSaleStatus } from '../controllers/saleController.js';
 import protect from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -333,5 +333,11 @@ router.get('/reports/sales/payment-methods', getSalesByPaymentMethod); // Obtene
  *                   example: 150
  */
 router.get('/reports/sales/status', getSalesByStatus); // Obtener ventas por estado
+
+
+
+router.patch("/:id/status", updateSaleStatus); // PATCH /api/sales/:id/status
+
+
 
 export default router;

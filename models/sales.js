@@ -1,13 +1,6 @@
-// models/Sale.js
-
 import mongoose from 'mongoose';
 
 const saleSchema = new mongoose.Schema({
-  saleId: {
-    type: String,  // UUID o similar
-    required: true,
-    unique: true
-  },
   products: [{
     productId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -18,23 +11,45 @@ const saleSchema = new mongoose.Schema({
       type: Number,
       required: true
     },
+    name: { type: String, required: true },
+    iva: {
+      type: Number,
+      required: true
+    },
     totalPrice: {
       type: Number,
       required: true
     }
   }],
-  totalAmount: {  // Este será el total de todos los productos
+  totalAmount: {  // total de todos los productos
     type: Number,
+    required: true
+  },
+  ruc: {
+    type: String,
     required: true
   },
   paymentMethod: {
     type: String,
     required: true
   },
+  iva: {
+    type: Number,
+    required: true,
+  },
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
+  },
+  status: {
+    type: String,
+    enum: ['completed', 'pending', 'canceled'],
+    required: true,
+  },
+  date: {
+    type: Date,
+    default: Date.now
   }
 });
 

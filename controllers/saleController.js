@@ -1,10 +1,11 @@
 import Sale from '../models/sales.js';
-import { v4 as uuidv4 } from 'uuid';
+import mongoose from 'mongoose';
 
 // Crear una nueva venta
 export const createSale = async (req, res) => {
+  console.log("Nuevo Producto:", req.body)
   try {
-    const { products, paymentMethod, user } = req.body;
+    const { products, paymentMethod, user, iva, ruc,status } = req.body;
 
     // Verificar si los productos fueron enviados
     if (!products || products.length === 0) {
@@ -17,16 +18,12 @@ export const createSale = async (req, res) => {
       totalAmount += product.totalPrice;  // Asumimos que `totalPrice` ya incluye cantidad * precio unitario
     });
 
-    // Generar un saleId único
-    const saleId = uuidv4();
-
     // Crear una nueva venta
     const newSale = new Sale({
-      saleId,
       products,
       totalAmount,  // Total de todos los productos
       paymentMethod,
-      user
+      user, ruc, iva,status
     });
 
     // Guardar la venta en la base de datos
@@ -42,48 +39,63 @@ export const createSale = async (req, res) => {
 
 // Obtener todas las ventas
 export const getSales = async (req, res) => {
-  const { page = 1, limit = 10, user } = req.query; // Valores por defecto para paginación
+  const { page = 1, limit = 10, user, status = "pending" } = req.query;
 
   try {
-    // Construir la consulta de filtro
     const query = {};
-    if (user) query.user = user; // Filtrar por usuario (si se pasa como parámetro)
+    if (user) query.user = user;
+    if (status) query.status = status;
 
-    // Calcular el número de documentos a omitir para la paginación
     const skip = (page - 1) * limit;
 
-    // Agregación para agrupar por saleId
-    const sales = await Sale.aggregate([
-      { $match: query }, // Filtrar las ventas por usuario u otros parámetros
-      { $skip: skip }, // Omite los primeros 'skip' elementos (paginación)
-      { $limit: parseInt(limit) }, // Limita la cantidad de ventas a 'limit'
-      {
-        $group: {
-          _id: "$saleId", // Agrupar por saleId
-          totalAmount: { $sum: "$totalAmount" }, // Sumar los montos totales
-          status: { $first: "$status" }, // Obtener el primer estado de la venta (suponiendo que sea el mismo para todos)
-          customer: { $first: "$customer" }, // Obtener los primeros datos del cliente
-          items: { $push: "$items" }, // Agregar los productos/ítems de la venta en un array
-        }
-      },
-      { $sort: { "_id": 1 } } // Ordenar los resultados por saleId (puedes cambiarlo si es necesario)
-    ]);
+    const sales = await Sale.find(query)
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
 
-    // Obtener el total de ventas para calcular el total de páginas
     const totalSales = await Sale.countDocuments(query);
 
-    // Responder con las ventas agrupadas y la información de paginación
     res.status(200).json({
       sales,
       totalSales,
       totalPages: Math.ceil(totalSales / limit),
-      currentPage: page,
-      limit,
+      currentPage: parseInt(page),
+      limit: parseInt(limit),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
+export const updateSaleStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status,ruc } = req.body;
+  console.log(id,status)
+
+  if (!["pending", "completed", "canceled"].includes(status)) {
+    return res.status(400).json({ message: "Estado inválido" });
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "ID inválido" });
+  }
+
+  try {
+    const updated = await Sale.updateMany(
+      { _id: id },
+      { $set: { status,ruc } }
+    );
+
+    if (updated.modifiedCount === 0) {
+      return res.status(404).json({ message: "Venta no encontrada" });
+    }
+
+    res.status(200).json({ message: "Estado actualizado", result: updated });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 
 
 // Obtener una venta por ID
