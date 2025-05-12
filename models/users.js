@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-const{sign,verify}=jwt
+const { sign, verify } = jwt
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -22,13 +22,18 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['user', 'admin'],
-    default: 'user'
+    enum: ['cashier', 'admin'],
+    default: 'cashier'
+  },
+  active: {
+    type: String,
+    enum: ['enable', 'disable'],
+    default: 'enable'
   }
 });
 
 // encriptación de contraseña
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
 
   this.password = await bcrypt.hash(this.password, 10);
@@ -36,13 +41,13 @@ userSchema.pre('save', async function(next) {
 });
 
 // verificar password
-userSchema.methods.matchPassword = async function(enteredPassword) {
+userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
 // generar JWT
-userSchema.methods.generateToken = function() {
-  const token = jwt.sign({ id: this._id, name:this.name, email:this.email, role: this.role }, process.env.JWT_SECRET, {
+userSchema.methods.generateToken = function () {
+  const token = jwt.sign({ id: this._id, name: this.name, email: this.email, role: this.role }, process.env.JWT_SECRET, {
     expiresIn: '12h' // El token expirará en 1 hora
   });
   return token;

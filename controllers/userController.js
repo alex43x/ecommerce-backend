@@ -1,14 +1,20 @@
 import User from '../models/users.js';
 
 // Login
-export const loginUser = async (req, res,next) => {
+export const loginUser = async (req, res, next) => {
   const { email, password } = req.body;
+  console.log(`Solicitud de login [${email}, ${password}]`);
 
   try {
     const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    // Verificar si el usuario está inactivo
+    if (user.active === "disable") {
+      return res.status(400).json({ message: 'User is inactive' });
     }
 
     const isMatch = await user.matchPassword(password);
@@ -26,6 +32,7 @@ export const loginUser = async (req, res,next) => {
   }
 };
 
+
 // CRUD de usuarios
 
 // Crear un usuario
@@ -36,8 +43,14 @@ export const createUser = async (req, res,next) => {
     const user = new User({ name, email, password, role });
     await user.save();
     res.status(201).json({ message: 'User created successfully', user });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    if (err.code === 11000) {
+      // clave duplicada (email ya registrado)
+      return res.status(400).json({
+        message: 'Ya existe un usuario con ese correo',
+        field: Object.keys(err.keyPattern)[0], // normalmente 'email'
+      });
+    }
   }
 };
 
@@ -69,7 +82,7 @@ export const getUserById = async (req, res,next) => {
 // Actualizar un usuario
 export const updateUser = async (req, res, next) => {
   const { id } = req.params;
-  const { name, email, password, role } = req.body;
+  const { name, email, password, role,active } = req.body;
 
   try {
     const user = await User.findById(id);
@@ -83,6 +96,7 @@ export const updateUser = async (req, res, next) => {
     user.name = name || user.name;
     user.email = email || user.email;
     user.role = role || user.role;
+    user.active = active || user.active;
 
     await user.save();
     res.status(200).json({ message: 'User updated successfully', user });
