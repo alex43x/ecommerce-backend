@@ -21,6 +21,11 @@ import protect from '../middleware/authMiddleware.js';
  *         application/json:
  *           schema:
  *             type: object
+ *             required:
+ *               - name
+ *               - price
+ *               - category
+ *               - imageURL
  *             properties:
  *               name:
  *                 type: string
@@ -28,6 +33,29 @@ import protect from '../middleware/authMiddleware.js';
  *               price:
  *                 type: number
  *                 example: 19.99
+ *               category:  
+ *                 type: string
+ *                 example: Ropa
+ *               imageURL:  
+ *                 type: string
+ *                 example: https://example.com/camiseta.jpg
+ *               createdAt: 
+ *                 type: string
+ *                 format: date-time
+ *               variants: 
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     abreviation: 
+ *                       type: string
+ *                       example: S
+ *                     size: 
+ *                       type: string
+ *                       example: Pequeño
+ *                     price: 
+ *                       type: number
+ *                       example: 5000
  *     responses:
  *       201:
  *         description: Producto creado exitosamente
