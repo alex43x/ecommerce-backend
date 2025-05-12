@@ -14,12 +14,19 @@ export const createProduct = async (req, res, next) => {
 
 // Obtener productos con búsqueda, paginación y filtros
 export const getProducts = async (req, res) => {
+  console.log("Solicitud de productos, ", req.query)
+
   const { page = 1, limit = 10, category, search, sortBy } = req.query;  // Valores por defecto si no se pasan parámetros
 
   try {
     // Construccion de la consulta de filtro
     const query = {};
-    if (category) query.category = category; // Filtrar por categoría
+    // Filtrar por categoría
+    if (category === 'noBebidas') {
+      query.category = { $ne: 'Bebidas' }; // Excluye productos que tengan "bebidas" en el array
+    } else if (category) {
+      query.category = category;
+    }
     if (search) query.name = { $regex: search, $options: 'i' }; // Búsqueda por nombre 
 
     // Ordenar
@@ -33,6 +40,10 @@ export const getProducts = async (req, res) => {
         sort = { name: 1 };   // Ordenar alfabéticamente por nombre ascendente
       } else if (sortBy === 'nameDesc') {
         sort = { name: -1 };  // Ordenar alfabéticamente por nombre descendente
+      } else if (sortBy === "dateAsc") {
+        sort = { createdAt: 1 }
+      } else if (sortBy === "dateDesc") {
+        sort = { createdAt: -1 }
       }
     }
 
@@ -43,6 +54,7 @@ export const getProducts = async (req, res) => {
     const products = await Product.find(query)
       .skip(skip)
       .limit(parseInt(limit))
+      .collation({ locale: "en", strength: 1 })
       .sort(sort) // Aplicar ordenación
       .exec();
 
@@ -76,9 +88,10 @@ export const getProductbyID = async (req, res, next) => {
 
 // 📌 Actualizar un producto
 export const updateProduct = async (req, res, next) => {
+  console.log(req.body)
   try {
     const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(updatedProduct);
+    res.json({ message: "Producto editado" });
   } catch (error) {
     next(error);
   }
@@ -102,7 +115,7 @@ export const getTopSellingProducts = async (req, res) => {
       { $sort: { salesCount: -1 } },
       { $limit: 10 }
     ]);
-    
+
     res.status(200).json(products);
   } catch (error) {
     res.status(500).json({ message: error.message });
