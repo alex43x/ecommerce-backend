@@ -10,12 +10,13 @@ import swaggerJsdoc from 'swagger-jsdoc';
 import productRoutes from "./routes/products.js";
 import userRoutes from './routes/users.js';
 import saleRoutes from './routes/sales.js';
+import reportsRoutes from "./routes/reports.js";
 import categoryRoutes from './routes/categories.js';
 import errorHandler from './middleware/errorMiddleware.js';
 
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100, // Limitar a 100 solicitudes por IP
+    max: 300, // Limitar a 100 solicitudes por IP
 });
 
 const options = {
@@ -51,6 +52,7 @@ app.use("/api/products", productRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/sales', saleRoutes);
+app.use("/api/reports", reportsRoutes);
 
 app.use(errorHandler);
 
