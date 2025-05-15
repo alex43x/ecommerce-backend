@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 export const createSale = async (req, res) => {
   console.log("Nuevo Producto:", req.body)
   try {
-    const { products, paymentMethod, user, iva, ruc,status } = req.body;
+    const { products, paymentMethod, user, iva, ruc, status } = req.body;
 
     // Verificar si los productos fueron enviados
     if (!products || products.length === 0) {
@@ -23,7 +23,7 @@ export const createSale = async (req, res) => {
       products,
       totalAmount,  // Total de todos los productos
       paymentMethod,
-      user, ruc, iva,status
+      user, ruc, iva, status
     });
 
     // Guardar la venta en la base de datos
@@ -39,19 +39,65 @@ export const createSale = async (req, res) => {
 
 // Obtener todas las ventas
 export const getSales = async (req, res) => {
-  const { page = 1, limit = 10, user, status = "pending" } = req.query;
+  const {
+    page = 1,
+    limit = 10,
+    user,
+    status,
+    startDate,
+    endDate,
+    paymentMethod,
+    ruc,
+    product, // Nuevo filtro por producto
+  } = req.query;
+
+  // Función auxiliar para evitar problemas con zonas horarias (formato local)
+  function toLocalDate(dateStr, hours = 0, minutes = 0, seconds = 0, ms = 0) {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    return new Date(year, month - 1, day, hours, minutes, seconds, ms);
+  }
 
   try {
-    const query = {};
+    const query = {}; // Aquí se irán acumulando los filtros
+
+    // Filtrar por usuario
     if (user) query.user = user;
-    if (status) query.status = status;
+
+    // Filtrar por estado (evitar 'all')
+    if (status && status !== "all") query.status = status;
+
+    // Filtrar por método de pago exacto
+    if (paymentMethod) query.paymentMethod = paymentMethod;
+
+    // Filtrar por RUC exacto
+    if (ruc) {
+      query.ruc = { $regex: ruc, $options: "i" };
+    }
+
+    // Filtrar por producto dentro del array de productos
+    if (product) {
+      query.products = {
+        $elemMatch: {
+          name: { $regex: new RegExp(product, "i") }, // búsqueda insensible a mayúsculas
+        },
+      };
+    }
+
+    // Filtrar por rango de fechas
+    if (startDate && endDate) {
+      const start = toLocalDate(startDate, 0, 0, 0, 0); // inicio del día
+      const end = toLocalDate(endDate, 23, 59, 59, 999); // fin del día
+      query.date = { $gte: start, $lte: end };
+    }
 
     const skip = (page - 1) * limit;
 
+    // Buscar ventas con los filtros, ordenar, paginar y poblar el nombre del usuario
     const sales = await Sale.find(query)
       .sort({ date: -1 })
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .populate("user", "name");
 
     const totalSales = await Sale.countDocuments(query);
 
@@ -67,10 +113,14 @@ export const getSales = async (req, res) => {
   }
 };
 
+
+
+
+
 export const updateSaleStatus = async (req, res) => {
   const { id } = req.params;
-  const { status,ruc } = req.body;
-  console.log(id,status)
+  const { status, ruc } = req.body;
+  console.log(id, status)
 
   if (!["pending", "completed", "canceled"].includes(status)) {
     return res.status(400).json({ message: "Estado inválido" });
@@ -83,7 +133,7 @@ export const updateSaleStatus = async (req, res) => {
   try {
     const updated = await Sale.updateMany(
       { _id: id },
-      { $set: { status,ruc } }
+      { $set: { status, ruc } }
     );
 
     if (updated.modifiedCount === 0) {
