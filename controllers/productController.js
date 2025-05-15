@@ -121,3 +121,33 @@ export const getTopSellingProducts = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// GET /api/products/barcode/:barcode
+export const getProductByBarcode = async (req, res) => {
+  const { barcode } = req.params;
+  console.log(barcode)
+
+  try {
+    const result = await Product.aggregate([
+      { $match: { "variants.barcode": barcode } },
+      { $unwind: "$variants" },
+      { $match: { "variants.barcode": barcode } },
+      {
+        $project: {
+          name: 1,
+          category: 1,
+          variants: "$variants",
+        }
+      }
+    ]);
+
+    if (!result.length) return res.status(404).json({ message: "No encontrado" });
+
+    res.json(result[0]);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
