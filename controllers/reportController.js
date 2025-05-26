@@ -126,17 +126,29 @@ export const getSalesByPaymentMethod = async (req, res, next) => {
   try {
     const sales = await Sale.aggregate([
       { $match: filter },
-      { $group: { _id: "$paymentMethod", totalSales: { $sum: "$totalAmount" } } },
-      { $project: { _id: 0, paymentMethod: "$_id", totalSales: 1 } },
+      {
+        $group: {
+          _id: "$paymentMethod",
+          totalSales: { $sum: "$totalAmount" },
+          transactionCount: { $sum: 1 }, // 👈 Cuenta cuántas ventas hubo
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          paymentMethod: "$_id",
+          totalSales: 1,
+          transactionCount: 1, // 👈 Incluye en la respuesta
+        },
+      },
     ]);
+
 
     res.status(200).json(sales);
   } catch (error) {
     next(error);
   }
 };
-
-// ✅ Ventas por categoría
 export const getSalesByCategory = async (req, res, next) => {
   const { startDate, endDate } = req.query;
   const defaultStart = new Date();
@@ -169,6 +181,7 @@ export const getSalesByCategory = async (req, res, next) => {
         $group: {
           _id: "$productInfo.category",
           totalSales: { $sum: "$products.totalPrice" },
+          transactionCount: { $sum: 1 },
         },
       },
       {
@@ -176,6 +189,7 @@ export const getSalesByCategory = async (req, res, next) => {
           _id: 0,
           category: "$_id",
           totalSales: 1,
+          transactionCount: 1,
         },
       },
       { $sort: { totalSales: -1 } },
@@ -187,7 +201,6 @@ export const getSalesByCategory = async (req, res, next) => {
   }
 };
 
-// ✅ Ventas por vendedor
 export const getSalesBySeller = async (req, res, next) => {
   const { startDate, endDate } = req.query;
   const defaultStart = new Date();
@@ -205,7 +218,13 @@ export const getSalesBySeller = async (req, res, next) => {
   try {
     const sales = await Sale.aggregate([
       { $match: filter },
-      { $group: { _id: "$user", totalSales: { $sum: "$totalAmount" } } },
+      {
+        $group: {
+          _id: "$user",
+          totalSales: { $sum: "$totalAmount" },
+          transactionCount: { $sum: 1 },
+        },
+      },
       {
         $lookup: {
           from: "users",
@@ -215,7 +234,14 @@ export const getSalesBySeller = async (req, res, next) => {
         },
       },
       { $unwind: "$userInfo" },
-      { $project: { _id: 0, sellerName: "$userInfo.name", totalSales: 1 } },
+      {
+        $project: {
+          _id: 0,
+          sellerName: "$userInfo.name",
+          totalSales: 1,
+          transactionCount: 1,
+        },
+      },
     ]);
 
     res.status(200).json(sales);
@@ -223,6 +249,7 @@ export const getSalesBySeller = async (req, res, next) => {
     next(error);
   }
 };
+
 
 // ✅ Ventas por producto (variantes)
 export const getSalesByProducts = async (req, res, next) => {
@@ -283,6 +310,117 @@ export const getSalesByProducts = async (req, res, next) => {
     next(error);
   }
 };
+
+
+import getISOWeek from "date-fns/getISOWeek";
+import getISOWeekYear from "date-fns/getISOWeekYear";
+
+export const getWeeklySalesByProducts = async (req, res, next) => {
+  const { productIds } = req.query;
+
+  try {
+    if (!productIds) {
+      return res.status(400).json({ message: "Debes proporcionar productIds" });
+    }
+
+    const ids = productIds
+      .split(",")
+      .slice(0, 5)
+      .map((id) => new mongoose.Types.ObjectId(id));
+
+    const today = new Date();
+    const todayYear = getISOWeekYear(today);
+    const todayWeek = getISOWeek(today);
+
+    // Generar las 8 semanas desde la actual hacia atrás
+    const weeks = [];
+    const weekKeys = [];
+    for (let i = 7; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i * 7);
+      const year = getISOWeekYear(d);
+      const week = getISOWeek(d);
+      const dayOfWeek = d.getDay(); // 0 (domingo) - 6 (sábado)
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - ((dayOfWeek + 6) % 7)); // lunes de esa semana
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6); // domingo de esa semana
+
+      const label = `${monday.toLocaleDateString("es-PY", {
+        day: "2-digit",
+        month: "2-digit",
+      })} - ${sunday.toLocaleDateString("es-PY", {
+        day: "2-digit",
+        month: "2-digit",
+      })}`;
+
+      weeks.push({ label, year, week });
+
+      weekKeys.push(`${year}-${week}`);
+    }
+
+    const startDate = new Date(weeks[0].year, 0, 1);
+    startDate.setDate((weeks[0].week - 1) * 7); // aproximación ISO
+
+    const raw = await Sale.aggregate([
+      {
+        $match: {
+          status: "completed",
+          date: { $gte: startDate, $lte: today },
+          "products.variantId": { $in: ids.map((id) => id.toString()) },
+        },
+      },
+      { $unwind: "$products" },
+      {
+        $match: {
+          "products.variantId": { $in: ids.map((id) => id.toString()) },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            variantId: "$products.variantId",
+            week: { $isoWeek: "$date" },
+            year: { $isoWeekYear: "$date" },
+          },
+          name: { $first: "$products.name" },
+          total: { $sum: "$products.totalPrice" },
+        },
+      },
+    ]);
+
+    const productMap = {};
+
+    raw.forEach((item) => {
+      const key = item._id.variantId;
+      const weekKey = `${item._id.year}-${item._id.week}`;
+      if (!productMap[key]) {
+        productMap[key] = {
+          name: item.name,
+          sales: {},
+        };
+      }
+      productMap[key].sales[weekKey] = item.total;
+    });
+
+    const result = Object.entries(productMap).map(([variantId, { name, sales }]) => ({
+      variantId,
+      name,
+      data: weekKeys.map((key) => sales[key] || 0),
+    }));
+
+    res.status(200).json({
+      labels: weeks.map((w) => w.label),
+      datasets: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+
+
 
 // ✅ Búsqueda de variantes
 export const getVariants = async (req, res) => {
