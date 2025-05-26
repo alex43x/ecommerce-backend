@@ -9,17 +9,17 @@ export const loginUser = async (req, res, next) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Correo y/o contraseña incorrectos' });
     }
 
     // Verificar si el usuario está inactivo
     if (user.active === "disable") {
-      return res.status(400).json({ message: 'User is inactive' });
+      return res.status(400).json({ message: 'El usuario está desactivado' });
     }
 
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Correo y/o contraseña incorrectos' });
     }
 
     const token = user.generateToken();
