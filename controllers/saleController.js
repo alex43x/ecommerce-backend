@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 export const createSale = async (req, res) => {
   console.log("Nuevo Producto:", req.body)
   try {
-    const { products, paymentMethod, user, iva, ruc, status } = req.body;
+    const { products, payment, user, iva, ruc, status,stage,mode } = req.body;
 
     // Verificar si los productos fueron enviados
     if (!products || products.length === 0) {
@@ -22,8 +22,8 @@ export const createSale = async (req, res) => {
     const newSale = new Sale({
       products,
       totalAmount,  // Total de todos los productos
-      paymentMethod,
-      user, ruc, iva, status
+      payment,
+      user, ruc, iva, status,stage,mode
     });
 
     // Guardar la venta en la base de datos
@@ -35,7 +35,6 @@ export const createSale = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 // Obtener todas las ventas
 export const getSales = async (req, res) => {
@@ -66,8 +65,13 @@ export const getSales = async (req, res) => {
     // Filtrar por estado (evitar 'all')
     if (status && status !== "all") query.status = status;
 
-    // Filtrar por método de pago exacto
-    if (paymentMethod) query.paymentMethod = paymentMethod;
+    // Filtrar por método de pago exacto  
+    if (paymentMethod) {
+      query.payment = {
+        $elemMatch: { paymentMethod: paymentMethod },
+      };
+    }
+
 
     // Filtrar por RUC exacto
     if (ruc) {
@@ -112,10 +116,6 @@ export const getSales = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-
-
-
 
 export const updateSaleStatus = async (req, res) => {
   const { id } = req.params;
