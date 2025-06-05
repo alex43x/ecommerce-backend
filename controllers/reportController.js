@@ -1,7 +1,9 @@
 import Sale from "../models/sales.js";
 import mongoose from "mongoose";
+import getISOWeek from "date-fns/getISOWeek";
+import getISOWeekYear from "date-fns/getISOWeekYear";
 
-// Función auxiliar para evitar problemas con zonas horarias
+// Función auxiliar para parsear fechas de forma flexible
 function toLocalDate(dateStr, hours = 0, minutes = 0, seconds = 0, ms = 0) {
   const parts = dateStr.split("-").map(Number);
   let year, month, day;
@@ -15,6 +17,24 @@ function toLocalDate(dateStr, hours = 0, minutes = 0, seconds = 0, ms = 0) {
   }
 
   return new Date(year, month - 1, day, hours, minutes, seconds, ms);
+}
+
+// Función reutilizable para obtener fechas con fallback
+function parseDateRange(startDate, endDate, defaultDays = 30) {
+  const start = startDate
+    ? toLocalDate(startDate, 0, 0, 0, 0)
+    : (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - defaultDays);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    })();
+
+  const endD = endDate
+    ? toLocalDate(endDate, 23, 59, 59, 999)
+    : new Date(); // ahora mismo
+
+  return { start, end: endD };
 }
 
 // ✅ Ventas totales del día, semana y mes
@@ -57,9 +77,7 @@ export const getSalesTotalAllPeriods = async (req, res, next) => {
 // ✅ Ventas totales por día en los últimos 7 días
 export const getSalesByDayLast7Days = async (req, res, next) => {
   const { startDate } = req.query;
-  console.log(req.query)
 
-  // Si hay startDate, se usa; si no, se toma 6 días antes de hoy
   const start = startDate
     ? toLocalDate(startDate, 0, 0, 0, 0)
     : (() => {
@@ -91,6 +109,7 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
       { $sort: { date: 1 } },
     ]);
 
+    // Asegurar días vacíos también aparecen
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(start);
       d.setDate(d.getDate() + i);
@@ -111,61 +130,51 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
 // ✅ Ventas por método de pago
 export const getSalesByPaymentMethod = async (req, res, next) => {
   const { startDate, endDate } = req.query;
-  const defaultStart = new Date();
-  defaultStart.setDate(defaultStart.getDate() - 30);
-  defaultStart.setHours(0, 0, 0, 0);
-
-  const filter = {
-    status: "completed",
-    date: {
-      $gte: startDate ? toLocalDate(startDate, 0, 0, 0, 0) : defaultStart,
-      ...(endDate && { $lte: toLocalDate(endDate, 23, 59, 59, 999) }),
-    },
-  };
+  const { start, end } = parseDateRange(startDate, endDate);
 
   try {
     const sales = await Sale.aggregate([
-      { $match: filter },
       {
-        $group: {
-          _id: "$paymentMethod",
-          totalSales: { $sum: "$totalAmount" },
-          transactionCount: { $sum: 1 }, // 👈 Cuenta cuántas ventas hubo
+        $match: {
+          status: "completed", //Filtra solo las que estan finalizadas
+          date: { $gte: start, $lte: end },
         },
       },
       {
-        $project: {
+        $unwind: "$payment", // Descompone array de pagos
+      },
+      {
+        $group: {
+          _id: "$payment.paymentMethod", //Agrupación por método de pago
+          totalSales: { $sum: "$payment.totalAmount" },
+          transactionCount: { $sum: 1 },
+        },
+      },
+      {
+        $project: {//Formato de salida
           _id: 0,
           paymentMethod: "$_id",
           totalSales: 1,
-          transactionCount: 1, // 👈 Incluye en la respuesta
+          transactionCount: 1,
         },
       },
     ]);
-
 
     res.status(200).json(sales);
   } catch (error) {
     next(error);
   }
 };
+
+
+// ✅ Ventas por categoría
 export const getSalesByCategory = async (req, res, next) => {
   const { startDate, endDate } = req.query;
-  const defaultStart = new Date();
-  defaultStart.setDate(defaultStart.getDate() - 30);
-  defaultStart.setHours(0, 0, 0, 0);
-
-  const filter = {
-    status: "completed",
-    date: {
-      $gte: startDate ? toLocalDate(startDate, 0, 0, 0, 0) : defaultStart,
-      ...(endDate && { $lte: toLocalDate(endDate, 23, 59, 59, 999) }),
-    },
-  };
+  const { start, end } = parseDateRange(startDate, endDate);
 
   try {
     const sales = await Sale.aggregate([
-      { $match: filter },
+      { $match: { status: "completed", date: { $gte: start, $lte: end } } },
       { $unwind: "$products" },
       {
         $lookup: {
@@ -201,23 +210,14 @@ export const getSalesByCategory = async (req, res, next) => {
   }
 };
 
+// ✅ Ventas por vendedor
 export const getSalesBySeller = async (req, res, next) => {
   const { startDate, endDate } = req.query;
-  const defaultStart = new Date();
-  defaultStart.setDate(defaultStart.getDate() - 30);
-  defaultStart.setHours(0, 0, 0, 0);
-
-  const filter = {
-    status: "completed",
-    date: {
-      $gte: startDate ? toLocalDate(startDate, 0, 0, 0, 0) : defaultStart,
-      ...(endDate && { $lte: toLocalDate(endDate, 23, 59, 59, 999) }),
-    },
-  };
+  const { start, end } = parseDateRange(startDate, endDate);
 
   try {
     const sales = await Sale.aggregate([
-      { $match: filter },
+      { $match: { status: "completed", date: { $gte: start, $lte: end } } },
       {
         $group: {
           _id: "$user",
@@ -250,8 +250,7 @@ export const getSalesBySeller = async (req, res, next) => {
   }
 };
 
-
-// ✅ Ventas por producto (variantes)
+// ✅ Ventas por variantes
 export const getSalesByProducts = async (req, res, next) => {
   const { startDate, endDate, productIds } = req.query;
 
@@ -265,24 +264,20 @@ export const getSalesByProducts = async (req, res, next) => {
       .slice(0, 5)
       .map((id) => new mongoose.Types.ObjectId(id));
 
-    const matchStage = {
-      status: "completed",
-      "products.variantId": { $in: ids.map(id => id.toString()) },
-    };
-
-    if (startDate && endDate) {
-      matchStage.date = {
-        $gte: toLocalDate(startDate, 0, 0, 0, 0),
-        $lte: toLocalDate(endDate, 23, 59, 59, 999),
-      };
-    }
+    const { start, end } = parseDateRange(startDate, endDate);
 
     const results = await Sale.aggregate([
-      { $match: matchStage },
+      {
+        $match: {
+          status: "completed",
+          date: { $gte: start, $lte: end },
+          "products.variantId": { $in: ids.map((id) => id.toString()) },
+        },
+      },
       { $unwind: "$products" },
       {
         $match: {
-          "products.variantId": { $in: ids.map(id => id.toString()) },
+          "products.variantId": { $in: ids.map((id) => id.toString()) },
         },
       },
       {
@@ -311,10 +306,7 @@ export const getSalesByProducts = async (req, res, next) => {
   }
 };
 
-
-import getISOWeek from "date-fns/getISOWeek";
-import getISOWeekYear from "date-fns/getISOWeekYear";
-
+// ✅ Ventas semanales por producto (últimas 8 semanas)
 export const getWeeklySalesByProducts = async (req, res, next) => {
   const { productIds } = req.query;
 
@@ -329,22 +321,16 @@ export const getWeeklySalesByProducts = async (req, res, next) => {
       .map((id) => new mongoose.Types.ObjectId(id));
 
     const today = new Date();
-    const todayYear = getISOWeekYear(today);
-    const todayWeek = getISOWeek(today);
-
-    // Generar las 8 semanas desde la actual hacia atrás
-    const weeks = [];
     const weekKeys = [];
+    const weeks = [];
+
     for (let i = 7; i >= 0; i--) {
       const d = new Date(today);
       d.setDate(today.getDate() - i * 7);
-      const year = getISOWeekYear(d);
-      const week = getISOWeek(d);
-      const dayOfWeek = d.getDay(); // 0 (domingo) - 6 (sábado)
       const monday = new Date(d);
-      monday.setDate(d.getDate() - ((dayOfWeek + 6) % 7)); // lunes de esa semana
+      monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
       const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6); // domingo de esa semana
+      sunday.setDate(monday.getDate() + 6);
 
       const label = `${monday.toLocaleDateString("es-PY", {
         day: "2-digit",
@@ -354,13 +340,12 @@ export const getWeeklySalesByProducts = async (req, res, next) => {
         month: "2-digit",
       })}`;
 
-      weeks.push({ label, year, week });
-
-      weekKeys.push(`${year}-${week}`);
+      weeks.push({ label, year: getISOWeekYear(d), week: getISOWeek(d) });
+      weekKeys.push(`${getISOWeekYear(d)}-${getISOWeek(d)}`);
     }
 
     const startDate = new Date(weeks[0].year, 0, 1);
-    startDate.setDate((weeks[0].week - 1) * 7); // aproximación ISO
+    startDate.setDate((weeks[0].week - 1) * 7);
 
     const raw = await Sale.aggregate([
       {
@@ -395,10 +380,7 @@ export const getWeeklySalesByProducts = async (req, res, next) => {
       const key = item._id.variantId;
       const weekKey = `${item._id.year}-${item._id.week}`;
       if (!productMap[key]) {
-        productMap[key] = {
-          name: item.name,
-          sales: {},
-        };
+        productMap[key] = { name: item.name, sales: {} };
       }
       productMap[key].sales[weekKey] = item.total;
     });
@@ -418,37 +400,33 @@ export const getWeeklySalesByProducts = async (req, res, next) => {
   }
 };
 
-
-
-
-
 // ✅ Búsqueda de variantes
 export const getVariants = async (req, res) => {
   const { q } = req.query;
   if (!q) {
-    return res.status(400).json({ message: 'Parámetro de búsqueda requerido' });
+    return res.status(400).json({ message: "Parámetro de búsqueda requerido" });
   }
 
   try {
     const results = await Sale.aggregate([
-      { $match: { status: 'completed' } },
-      { $unwind: '$products' },
+      { $match: { status: "completed" } },
+      { $unwind: "$products" },
       {
         $match: {
-          'products.name': { $regex: q, $options: 'i' },
+          "products.name": { $regex: q, $options: "i" },
         },
       },
       {
         $group: {
-          _id: '$products.variantId',
-          name: { $first: '$products.name' },
+          _id: "$products.variantId",
+          name: { $first: "$products.name" },
         },
       },
       { $limit: 5 },
       {
         $project: {
           _id: 0,
-          variantId: '$_id',
+          variantId: "$_id",
           name: 1,
         },
       },
@@ -456,7 +434,6 @@ export const getVariants = async (req, res) => {
 
     res.json(results);
   } catch (error) {
-    console.error('Error al buscar variantes:', error);
-    res.status(500).json({ message: 'Error interno del servidor' });
+    res.status(500).json({ message: "Error interno del servidor" });
   }
 };
