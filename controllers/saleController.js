@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 export const createSale = async (req, res) => {
   console.log("Nuevo Producto:", req.body)
   try {
-    const { products, payment, user, iva, ruc, status,stage,mode } = req.body;
+    const { products, payment, user, iva, ruc, status, stage, mode } = req.body;
 
     // Verificar si los productos fueron enviados
     if (!products || products.length === 0) {
@@ -23,7 +23,7 @@ export const createSale = async (req, res) => {
       products,
       totalAmount,  // Total de todos los productos
       payment,
-      user, ruc, iva, status,stage,mode
+      user, ruc, iva, status, stage, mode
     });
 
     // Guardar la venta en la base de datos
@@ -55,7 +55,7 @@ export const getSales = async (req, res) => {
     const [year, month, day] = dateStr.split("-").map(Number);
     return new Date(year, month - 1, day, hours, minutes, seconds, ms);
   }
-
+  console.log(req.query);
   try {
     const query = {}; // Aquí se irán acumulando los filtros
 
@@ -120,9 +120,15 @@ export const getSales = async (req, res) => {
 export const updateSaleStatus = async (req, res) => {
   const { id } = req.params;
   const { status, ruc } = req.body;
+  let stage = "";
+  if (status === "canceled" || status === "annulled") {
+    stage = "closed";
+  } else if (status === "completed") {
+    stage = "delivered"
+  }
   console.log(id, status)
 
-  if (!["pending", "completed", "canceled"].includes(status)) {
+  if (!["pending", "completed", "canceled", "ordered", "annulled", "ready"].includes(status)) {
     return res.status(400).json({ message: "Estado inválido" });
   }
 
@@ -130,11 +136,20 @@ export const updateSaleStatus = async (req, res) => {
     return res.status(400).json({ message: "ID inválido" });
   }
 
+  let updated;
   try {
-    const updated = await Sale.updateMany(
-      { _id: id },
-      { $set: { status, ruc } }
-    );
+    if (status !== "ready") {
+      updated = await Sale.updateMany(
+        { _id: id },
+        { $set: { status, ruc, stage } }
+      );
+    } else {
+      stage = "finished"
+      updated = await Sale.updateMany(
+        { _id: id },
+        { $set: { ruc, stage } }
+      );
+    }
 
     if (updated.modifiedCount === 0) {
       return res.status(404).json({ message: "Venta no encontrada" });
@@ -166,18 +181,17 @@ export const getSaleById = async (req, res, next) => {
 // Actualizar una venta
 export const updateSale = async (req, res, next) => {
   const { id } = req.params;
-  const { user, items, total, type } = req.body;
-
+  const { newSale } = req.body;
+  console.log(id, newSale)
   try {
     const sale = await Sale.findById(id);
     if (!sale) {
       return res.status(404).json({ message: 'Sale not found' });
     }
 
-    sale.user = user || sale.user;
-    sale.items = items || sale.items;
-    sale.total = total || sale.total;
-    sale.type = type || sale.type;
+    sale.payment = newSale.payment || sale.payment;
+    sale.status = newSale.status|| sale.status;
+    sale.stage = newSale.stage || sale.stage;
 
     await sale.save();
     res.status(200).json({ message: 'Sale updated successfully', sale });
