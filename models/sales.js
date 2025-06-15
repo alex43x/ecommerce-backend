@@ -19,7 +19,8 @@ const saleSchema = new mongoose.Schema({
   ruc: { type: String, required: true },
   payment: [{//Array de Pagos
     paymentMethod: { type: String, required: true, enum: ['cash', 'card', 'qr', 'transfer'] },//Método de Pago
-    totalAmount: { type: Number, required: true } //Cantidad pagada con el método de pago
+    totalAmount: { type: Number, required: true }, //Cantidad pagada con el método de pago
+    date: { type: Date, default: Date.now }//Fecha de cada pago
   }],
   iva: { type: Number, required: true },//IVA generado por la venta
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Vendedor que realizó la venta
@@ -29,14 +30,13 @@ const saleSchema = new mongoose.Schema({
   Pending: Orden Pendiente (Sin Pagar)
   Ordered: Orden Pedido (Pago Parcial)
   Canceled: Orden Cancelada (si se cancela antes de la confirmación)
-  Annulled: Orden Anulado (igual que cancelled pero después de la confirmación)
-  */
-  stage: { type: String, enum: ['finished', 'processed', 'closed'], required: true },
+  Annulled: Orden Anulado (igual que cancelled pero después de la confirmación)*/
+  stage: { type: String, enum: ['delivered', 'finished', 'processed', 'closed'], required: true },
   /*Etapas de Orden 
+  Delivered: Entregado,
   Finished: Terminado, listo para entregar
   Processed: En proceso, aún no se puede entregar
-  Closed: Terminado, por anulación o cancelación
-  */
+  Closed: Terminado, por anulación o cancelación*/
   mode: { type: String, enum: ['local', 'carry', 'delivery'], required: true },//Modo de venta (En local, para llevar o delivery)
   date: { type: Date, default: Date.now }//Fecha en la que se realizó la orden
 });
