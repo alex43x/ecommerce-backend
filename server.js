@@ -6,8 +6,10 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
+import logger from './config/logger.js';
 
 import productRoutes from "./routes/products.js";
+import customerRoutes from "./routes/customers.js";
 import userRoutes from './routes/users.js';
 import saleRoutes from './routes/sales.js';
 import reportsRoutes from "./routes/reports.js";
@@ -15,20 +17,21 @@ import categoryRoutes from './routes/categories.js';
 import errorHandler from './middleware/errorMiddleware.js';
 
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
+    windowMs: 15 * 60 * 1000, // 15 minutos de ventana
     max: 300, // Limitar a 100 solicitudes por IP
+    message: 'Demasiadas solicitudes desde esta IP, por favor intenta nuevamente en 15 minutos',
 });
 
 const options = {
     definition: {
         openapi: '3.0.0',
         info: {
-            title: 'Ecommerce API',
-            version: '1.1.0',
-            description: 'Documentación de la API del Ecommerce',
+            title: 'POS API',
+            version: '1.0.0',
+            description: 'Documentación de la API del POS',
         },
     },
-    apis: ['./routes/*.js'], // Archivos de rutas que contienen los comentarios de Swagger
+    apis: ['./docs/*.swagger.js', './routes/*.js'], // Archivos de rutas que contienen los comentarios de Swagger
 };
 
 dotenv.config();
@@ -39,6 +42,10 @@ app.use(express.json());
 app.use(cors());
 app.use(helmet());
 app.use(limiter);
+app.use((req, res, next) => {
+  logger.http(`[${req.method}] ${req.originalUrl}`);
+  next();
+});
 
 const specs = swaggerJsdoc(options);
 app.get('/api-docs/swagger.json', (req, res) => {
@@ -53,6 +60,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/sales', saleRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/customers", customerRoutes);
 
 app.use(errorHandler);
 
