@@ -22,15 +22,25 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['cashier', 'admin','spadmin'],
+    enum: ['cashier', 'admin', 'spadmin'],
     default: 'cashier'
   },
   active: {
     type: String,
     enum: ['enable', 'disable'],
     default: 'enable'
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
-});
+}, {
+  timestamps: true // Esto actualizará automáticamente updatedAt
+})
 
 // encriptación de contraseña
 userSchema.pre('save', async function (next) {
@@ -47,10 +57,14 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
 
 // generar JWT
 userSchema.methods.generateToken = function () {
-  const token = jwt.sign({ id: this._id, name: this.name, email: this.email, role: this.role }, process.env.JWT_SECRET, {
-    expiresIn: '12h' // El token expirará en 1 hora
-  });
-  return token;
+  return jwt.sign(
+    {
+      id: this._id,
+      role: this.role // Solo incluye datos necesarios
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '8h' }
+  );
 };
 
 const User = mongoose.model('User', userSchema);
