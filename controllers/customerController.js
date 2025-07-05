@@ -2,13 +2,24 @@ import Customer from '../models/customer.js';
 import mongoose from 'mongoose';
 
 // Crear un nuevo cliente
-export const createCustomer = async (req, res) => {
+export const createCustomer = async (req, res, next) => {
   try {
     const { ruc, name, email, phone, address } = req.body;
 
     // Validación básica
     if (!ruc || !name) {
-      return res.status(400).json({ message: 'RUC y nombre son obligatorios' });
+      const error = new Error('RUC y nombre son obligatorios');
+      error.name = 'ValidationError';
+      throw error;
+    }
+
+    // Verificar si el RUC ya existe
+    const existingCustomer = await Customer.findOne({ ruc });
+    if (existingCustomer) {
+      const error = new Error('El RUC ya está registrado');
+      error.name = 'DuplicateError';
+      error.status = 409; // Conflict
+      throw error;
     }
 
     const newCustomer = new Customer({
@@ -22,22 +33,17 @@ export const createCustomer = async (req, res) => {
     await newCustomer.save();
     res.status(201).json(newCustomer);
   } catch (error) {
-    if (error.code === 11000) { // Error de duplicado (RUCI único)
-      res.status(400).json({ message: 'El RUC ya está registrado' });
-    } else {
-      res.status(500).json({ message: error.message });
-    }
+    next(error);
   }
 };
 
 // Obtener todos los clientes (con paginación)
-export const getCustomers = async (req, res) => {
+export const getCustomers = async (req, res, next) => {
   const { page = 1, limit = 10, search = '', active } = req.query;
 
   try {
     const query = {};
-    
-    // Filtro de búsqueda
+
     if (search) {
       query.$or = [
         { ruc: { $regex: search, $options: 'i' } },
@@ -46,50 +52,57 @@ export const getCustomers = async (req, res) => {
       ];
     }
 
-    // Filtro por estado activo
     if (active !== undefined) {
       query.isActive = active === 'true';
     }
 
-    const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sort: { name: 1 }
-    };
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const customers = await Customer.paginate(query, options);
-
+    const [customers, total] = await Promise.all([
+      Customer.find(query)
+        .sort({ name: 1 })
+        .skip(skip)
+        .limit(limitNum),
+      Customer.countDocuments(query)
+    ]);
+    console.log(customers)
     res.status(200).json({
-      customers: customers.docs,
-      totalCustomers: customers.totalDocs,
-      totalPages: customers.totalPages,
-      currentPage: customers.page,
-      limit: customers.limit
+      customers,
+      totalCustomers: total,
+      totalPages: Math.ceil(total / limitNum),
+      currentPage: pageNum,
+      limit: limitNum
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Obtener un cliente por ID
-export const getCustomerById = async (req, res) => {
+export const getCustomerById = async (req, res, next) => {
   try {
     const customer = await Customer.findById(req.params.id);
     if (!customer) {
-      return res.status(404).json({ message: 'Cliente no encontrado' });
+      const error = new Error('Cliente no encontrado');
+      error.name = 'NotFoundError';
+      throw error;
     }
     res.status(200).json(customer);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Actualizar un cliente
-export const updateCustomer = async (req, res) => {
+export const updateCustomer = async (req, res, next) => {
   const { id } = req.params;
-  
+
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: 'ID inválido' });
+    const error = new Error('ID inválido');
+    error.name = 'ValidationError';
+    throw error;
   }
 
   try {
@@ -100,54 +113,54 @@ export const updateCustomer = async (req, res) => {
     );
 
     if (!customer) {
-      return res.status(404).json({ message: 'Cliente no encontrado' });
+      const error = new Error('Cliente no encontrado');
+      error.name = 'NotFoundError';
+      throw error;
     }
 
     res.status(200).json(customer);
   } catch (error) {
-    if (error.code === 11000) {
-      res.status(400).json({ message: 'El RUC ya está registrado' });
-    } else {
-      res.status(500).json({ message: error.message });
-    }
+    next(error);
   }
 };
 
 // Desactivar/Activar cliente (en lugar de borrar)
-export const toggleCustomerStatus = async (req, res) => {
+export const toggleCustomerStatus = async (req, res, next) => {
   try {
     const customer = await Customer.findById(req.params.id);
     if (!customer) {
-      return res.status(404).json({ message: 'Cliente no encontrado' });
+      const error = new Error('Cliente no encontrado');
+      error.name = 'NotFoundError';
+      throw error;
     }
 
     customer.isActive = !customer.isActive;
     await customer.save();
 
-    res.status(200).json({ 
+    res.status(200).json({
       message: `Cliente ${customer.isActive ? 'activado' : 'desactivado'} correctamente`,
       customer
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };
 
 // Buscar clientes por RUC o nombre (para autocompletar)
-export const searchCustomers = async (req, res) => {
+export const searchCustomers = async (req, res, next) => {
   const { term } = req.query;
 
   try {
     const customers = await Customer.find({
       $or: [
-        { ruc: { $regex: term, $options: 'i' } },
-        { name: { $regex: term, $options: 'i' } }
+        { ruc: term },  // Búsqueda exacta del RUC
+        { name: { $regex: term, $options: 'i' } }  // Búsqueda por coincidencia en el nombre (como antes)
       ],
       isActive: true
     }).limit(10).select('ruc name phone');
 
     res.status(200).json(customers);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    next(error);
   }
 };

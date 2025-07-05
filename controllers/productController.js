@@ -1,113 +1,300 @@
 import { Product } from "../models/product.js";
+import { body, param, validationResult } from 'express-validator';
+import logger from '../config/logger.js';
+import mongoose from 'mongoose';
 
+// Validaciones comunes para datos de producto
+const productDataValidations = [
+  body('name')
+    .trim()
+    .notEmpty().withMessage('El nombre es requerido')
+    .isLength({ max: 100 }).withMessage('Máximo 100 caracteres'),
+    
+  body('description')
+    .optional()
+    .isLength({ max: 500 }).withMessage('Máximo 500 caracteres'),
+    
+  body('category')
+    .notEmpty().withMessage('La categoría es requerida')
+    .isLength({ max: 50 }).withMessage('Máximo 50 caracteres'),
+    
+  body('price')
+    .isFloat({ min: 0 }).withMessage('El precio debe ser un número positivo'),
+    
+  body('cost')
+    .optional()
+    .isFloat({ min: 0 }).withMessage('El costo debe ser un número positivo'),
+    
+  body('stock')
+    .optional()
+    .isInt({ min: 0 }).withMessage('El stock debe ser un entero positivo'),
+    
+  body('variants.*.name')
+    .optional()
+    .isLength({ max: 50 }).withMessage('Máximo 50 caracteres para el nombre de variante'),
+    
+  body('variants.*.barcode')
+    .optional()
+    .isLength({ max: 50 }).withMessage('Máximo 50 caracteres para el código de barras'),
+    
+  body('variants.*.price')
+    .optional()
+    .isFloat({ min: 0 }).withMessage('El precio de variante debe ser un número positivo'),
+    
+  body('active')
+    .optional()
+    .isBoolean().withMessage('El estado activo debe ser un valor booleano')
+];
 
-//Crear un producto
-export const createProduct = async (req, res, next) => {
-  try {
-    const newProduct = new Product(req.body);
-    await newProduct.save();
-    res.status(201).json(newProduct);
-  } catch (error) {
-    next(error);
+// Validación de ID en parámetros
+const idValidation = [
+  param('id')
+    .notEmpty().withMessage('El ID es requerido')
+    .custom((value) => mongoose.Types.ObjectId.isValid(value))
+    .withMessage('ID no válido')
+];
+
+// Validación de código de barras
+const barcodeValidation = [
+  param('barcode')
+    .notEmpty().withMessage('El código de barras es requerido')
+    .isLength({ max: 50 }).withMessage('Máximo 50 caracteres')
+];
+
+// Middleware para validar resultados
+const validateRequest = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    const formattedErrors = errors.array().map(error => ({
+      field: error.param,
+      message: error.msg,
+      location: error.location,
+      value: error.value
+    }));
+
+    logger.warn('Errores de validación', {
+      path: req.path,
+      method: req.method,
+      errors: formattedErrors
+    });
+
+    return res.status(400).json({
+      success: false,
+      message: 'Errores de validación',
+      errors: formattedErrors
+    });
   }
+  next();
 };
 
-// Obtener productos con búsqueda, paginación y filtros
-export const getProducts = async (req, res) => {
-  console.log("Solicitud de productos, ", req.query)
+export const createProduct = [
+  ...productDataValidations,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const newProduct = new Product(req.body);
+      await newProduct.save();
+      
+      logger.info(`Producto creado: ${newProduct._id}`, { productId: newProduct._id });
+      
+      res.status(201).json({
+        success: true,
+        message: 'Producto creado exitosamente',
+        data: {
+          id: newProduct._id,
+          name: newProduct.name,
+          category: newProduct.category,
+          price: newProduct.price,
+          active: newProduct.active
+        }
+      });
+    } catch (error) {
+      if (error.code === 11000) {
+        logger.warn(`Intento de crear producto con nombre duplicado: ${req.body.name}`);
+        error.statusCode = 409;
+        error.clientMessage = 'El nombre de producto ya existe';
+        error.clientDetails = { field: 'name' };
+      }
+      next(error);
+    }
+  }
+];
 
-  const { page = 1, limit = 10, category, search, sortBy } = req.query;  // Valores por defecto si no se pasan parámetros
+export const getProducts = async (req, res, next) => {
+  const { page = 1, limit = 10, category, search, sortBy } = req.query;
 
   try {
-    // Construccion de la consulta de filtro
+    // Construcción de la consulta de filtro
     const query = {};
-    // Filtrar por categoría
+    
     if (category === 'noBebidas') {
-      query.category = { $ne: 'Bebidas' }; // Excluye productos que tengan "bebidas" en el array
+      query.category = { $ne: 'Bebidas' };
     } else if (category) {
       query.category = category;
     }
-    if (search) query.name = { $regex: search, $options: 'i' }; // Búsqueda por nombre 
-
-    // Ordenar
-    let sort = {};
-    if (sortBy) {
-      if (sortBy === 'priceAsc') {
-        sort = { price: 1 };  // Ordenar por precio ascendente
-      } else if (sortBy === 'priceDesc') {
-        sort = { price: -1 }; // Ordenar por precio descendente
-      } else if (sortBy === 'nameAsc') {
-        sort = { name: 1 };   // Ordenar alfabéticamente por nombre ascendente
-      } else if (sortBy === 'nameDesc') {
-        sort = { name: -1 };  // Ordenar alfabéticamente por nombre descendente
-      } else if (sortBy === "dateAsc") {
-        sort = { createdAt: 1 }
-      } else if (sortBy === "dateDesc") {
-        sort = { createdAt: -1 }
-      }
+    
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
     }
 
-    // Calcular el número de documentos a omitir para la paginación
-    const skip = (page - 1) * limit;
+    // Ordenamiento
+    let sort = {};
+    const sortOptions = {
+      'priceAsc': { price: 1 },
+      'priceDesc': { price: -1 },
+      'nameAsc': { name: 1 },
+      'nameDesc': { name: -1 },
+      'dateAsc': { createdAt: 1 },
+      'dateDesc': { createdAt: -1 }
+    };
+    
+    if (sortBy && sortOptions[sortBy]) {
+      sort = sortOptions[sortBy];
+    }
 
-    // Obtener los productos de la base de datos con paginación, filtros y ordenación
-    const products = await Product.find(query)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .collation({ locale: "en", strength: 1 })
-      .sort(sort) // Aplicar ordenación
-      .exec();
+    // Paginación
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const parsedLimit = parseInt(limit);
 
-    // Obtener el total de productos para saber cuántas páginas hay
-    const totalProducts = await Product.countDocuments(query);
+    // Consulta a la base de datos
+    const [products, totalProducts] = await Promise.all([
+      Product.find(query)
+        .skip(skip)
+        .limit(parsedLimit)
+        .collation({ locale: "en", strength: 1 })
+        .sort(sort)
+        .lean(),
+      Product.countDocuments(query)
+    ]);
 
-    // Responder con los productos y la información de paginación
-    res.status(200).json({
-      products,
-      totalProducts,
-      totalPages: Math.ceil(totalProducts / limit),
-      currentPage: page,
-      limit,
+    logger.debug(`Obtenidos ${products.length} productos de ${totalProducts}`);
+
+    // Construcción de la respuesta
+    const response = {
+      success: true,
+      count: products.length,
+      totalItems: totalProducts,
+      totalPages: Math.ceil(totalProducts / parsedLimit),
+      currentPage: parseInt(page),
+      itemsPerPage: parsedLimit,
+      data: products
+    };
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    logger.error(`Error al obtener productos: ${error.message}`, {
+      queryParams: req.query
     });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-
-// 📌 Obtener un producto por ID
-export const getProductbyID = async (req, res, next) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: "Producto no encontrado" });
-    res.json(product);
-  } catch (error) {
     next(error);
   }
 };
 
-// 📌 Actualizar un producto
-export const updateProduct = async (req, res, next) => {
-  console.log(req.body)
-  try {
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json({ message: "Producto editado" });
-  } catch (error) {
-    next(error);
-  }
-};
+export const getProductbyID = [
+  ...idValidation,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const product = await Product.findById(req.params.id).lean();
+      
+      if (!product) {
+        logger.warn(`Producto no encontrado: ${req.params.id}`);
+        const error = new Error('Producto no encontrado');
+        error.statusCode = 404;
+        throw error;
+      }
 
-// 📌 Eliminar un producto
-export const deleteProduct = async (req, res, next) => {
-  try {
-    await Product.findByIdAndDelete(req.params.id);
-    res.json({ message: "Producto eliminado" });
-  } catch (error) {
-    next(error);
-  }
-};
+      res.status(200).json({
+        success: true,
+        data: product
+      });
 
-export const getTopSellingProducts = async (req, res) => {
+    } catch (error) {
+      logger.error(`Error al obtener producto por ID: ${error.message}`, {
+        productId: req.params.id
+      });
+      next(error);
+    }
+  }
+];
+
+export const updateProduct = [
+  ...idValidation,
+  ...productDataValidations,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const updatedProduct = await Product.findByIdAndUpdate(
+        req.params.id, 
+        req.body, 
+        { new: true, runValidators: true }
+      ).lean();
+
+      if (!updatedProduct) {
+        logger.warn(`Producto no encontrado para actualización: ${req.params.id}`);
+        const error = new Error('Producto no encontrado');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      logger.info(`Producto actualizado: ${updatedProduct._id}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Producto actualizado exitosamente',
+        data: updatedProduct
+      });
+
+    } catch (error) {
+      if (error.code === 11000) {
+        logger.warn(`Intento de actualizar a nombre de producto duplicado: ${req.body.name}`);
+        error.statusCode = 409;
+        error.clientMessage = 'El nombre de producto ya existe';
+        error.clientDetails = { field: 'name' };
+      }
+      logger.error(`Error al actualizar producto: ${error.message}`, {
+        productId: req.params.id
+      });
+      next(error);
+    }
+  }
+];
+
+export const deleteProduct = [
+  ...idValidation,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const product = await Product.findByIdAndDelete(req.params.id).lean();
+
+      if (!product) {
+        logger.warn(`Producto no encontrado para eliminación: ${req.params.id}`);
+        const error = new Error('Producto no encontrado');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      logger.info(`Producto eliminado: ${product._id}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Producto eliminado exitosamente',
+        data: { id: product._id }
+      });
+
+    } catch (error) {
+      logger.error(`Error al eliminar producto: ${error.message}`, {
+        productId: req.params.id
+      });
+      next(error);
+    }
+  }
+];
+
+export const getTopSellingProducts = async (req, res, next) => {
   try {
     const products = await Product.aggregate([
       { $lookup: { from: "sales", localField: "_id", foreignField: "items.product", as: "sales_info" } },
@@ -116,38 +303,54 @@ export const getTopSellingProducts = async (req, res) => {
       { $limit: 10 }
     ]);
 
-    res.status(200).json(products);
+    res.status(200).json({
+      success: true,
+      data: products
+    });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    logger.error(`Error al obtener productos más vendidos: ${error.message}`);
+    next(error);
   }
 };
 
-// GET /api/products/barcode/:barcode
-export const getProductByBarcode = async (req, res) => {
-  const { barcode } = req.params;
-  console.log(barcode)
-
-  try {
-    const result = await Product.aggregate([
-      { $match: { "variants.barcode": barcode } },
-      { $unwind: "$variants" },
-      { $match: { "variants.barcode": barcode } },
-      {
-        $project: {
-          name: 1,
-          category: 1,
-          variants: "$variants",
+export const getProductByBarcode = [
+  ...barcodeValidation,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const { barcode } = req.params;
+      
+      const result = await Product.aggregate([
+        { $match: { "variants.barcode": barcode } },
+        { $unwind: "$variants" },
+        { $match: { "variants.barcode": barcode } },
+        {
+          $project: {
+            name: 1,
+            category: 1,
+            variants: "$variants",
+          }
         }
+      ]);
+
+      if (!result.length) {
+        logger.warn(`Producto con código de barras no encontrado: ${barcode}`);
+        const error = new Error('Producto no encontrado');
+        error.statusCode = 404;
+        throw error;
       }
-    ]);
 
-    if (!result.length) return res.status(404).json({ message: "No encontrado" });
+      res.status(200).json({
+        success: true,
+        data: result[0]
+      });
 
-    res.json(result[0]);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    } catch (error) {
+      logger.error(`Error al buscar producto por código de barras: ${error.message}`, {
+        barcode: req.params.barcode
+      });
+      next(error);
+    }
   }
-};
-
-
-
+];

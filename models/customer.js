@@ -6,12 +6,7 @@ const customerSchema = new mongoose.Schema({
     required: true,
     unique: true,
     trim: true,
-    validate: {
-      validator: function(v) {
-        return /^[0-9]{7,15}$/.test(v); // Validación básica de RUC
-      },
-      message: props => `${props.value} no es un RUC válido!`
-    }
+   
   },
   name: {
     type: String,

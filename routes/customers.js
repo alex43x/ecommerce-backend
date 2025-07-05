@@ -1,11 +1,11 @@
 import express from 'express';
 import {
-  createCustomer,
-  getCustomers,
-  getCustomerById,
-  updateCustomer,
-  toggleCustomerStatus,
-  searchCustomers
+    createCustomer,
+    getCustomers,
+    getCustomerById,
+    updateCustomer,
+    toggleCustomerStatus,
+    searchCustomers
 } from '../controllers/customerController.js';
 import protect from '../middleware/authMiddleware.js';
 
@@ -16,6 +16,74 @@ const router = express.Router();
  * tags:
  *   name: Clientes
  *   description: Gestión de clientes del sistema
+ */
+
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     Direccion:
+ *       type: object
+ *       properties:
+ *         street:
+ *           type: string
+ *           example: "Av. República 123"
+ *         city:
+ *           type: string
+ *           example: "Asunción"
+ *         neighborhood:
+ *           type: string
+ *           example: "San Roque"
+ *         reference:
+ *           type: string
+ *           example: "Cerca del shopping"
+ * 
+ *     Cliente:
+ *       type: object
+ *       required:
+ *         - ruc
+ *         - name
+ *       properties:
+ *         _id:
+ *           type: string
+ *           example: "60b5f7f4a4f8d73444d5f88a"
+ *         ruc:
+ *           type: string
+ *           pattern: "^[0-9]{7,15}$"
+ *           example: "80012345"
+ *           description: RUC del cliente (7-15 dígitos)
+ *         name:
+ *           type: string
+ *           example: "Juan Pérez"
+ *           minLength: 1
+ *           maxLength: 100
+ *         email:
+ *           type: string
+ *           format: email
+ *           example: "juan@empresa.com"
+ *         phone:
+ *           type: string
+ *           pattern: "^[0-9\\s+-]{6,20}$"  # Corrección aquí: \\s en lugar de \s
+ *           example: "0981123456"
+ *         address:
+ *           $ref: '#/components/schemas/Direccion'
+ *         isActive:
+ *           type: boolean
+ *           default: true
+ *         createdAt:
+ *           type: string
+ *           format: date-time
+ *           example: "2023-06-15T14:30:00.000Z"
+ *         updatedAt:
+ *           type: string
+ *           format: date-time
+ *           example: "2023-06-15T14:30:00.000Z"
+ * 
+ *   securitySchemes:
+ *     bearerAuth:
+ *       type: http
+ *       scheme: bearer
+ *       bearerFormat: JWT
  */
 
 /**
@@ -31,50 +99,26 @@ const router = express.Router();
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required:
- *               - ruc
- *               - name
- *             properties:
- *               ruc:
- *                 type: string
- *                 example: "80012345"
- *                 description: RUC del cliente (7-15 dígitos)
- *               name:
- *                 type: string
- *                 example: "Juan Pérez"
- *               email:
- *                 type: string
- *                 example: "juan@empresa.com"
- *               phone:
- *                 type: string
- *                 example: "0981123456"
- *               address:
- *                 type: object
- *                 properties:
- *                   street:
- *                     type: string
- *                     example: "Av. República 123"
- *                   city:
- *                     type: string
- *                     example: "Asunción"
- *                   neighborhood:
- *                     type: string
- *                     example: "San Roque"
- *                   reference:
- *                     type: string
- *                     example: "Cerca del shopping"
+ *             $ref: '#/components/schemas/Cliente'
  *     responses:
  *       201:
  *         description: Cliente creado exitosamente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Customer'
+ *               $ref: '#/components/schemas/Cliente'
  *       400:
- *         description: Error de validación (RUC duplicado o datos inválidos)
+ *         description: |
+ *           Error de validación:
+ *           - RUC inválido (debe tener 7-15 dígitos)
+ *           - RUC duplicado
+ *           - Email inválido
+ *           - Teléfono inválido
+ *           - Faltan campos requeridos
  *       401:
  *         description: No autorizado (token inválido o no proporcionado)
+ *       500:
+ *         description: Error interno del servidor
  */
 router.post('/', protect, createCustomer);
 
@@ -82,7 +126,7 @@ router.post('/', protect, createCustomer);
  * @swagger
  * /api/customers:
  *   get:
- *     summary: Obtener listado de clientes
+ *     summary: Obtener listado de clientes con paginación
  *     tags: [Clientes]
  *     security:
  *       - bearerAuth: []
@@ -91,12 +135,15 @@ router.post('/', protect, createCustomer);
  *         name: page
  *         schema:
  *           type: integer
+ *           minimum: 1
  *           default: 1
  *         description: Número de página
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
+ *           minimum: 1
+ *           maximum: 100
  *           default: 10
  *         description: Límite de resultados por página
  *       - in: query
@@ -120,7 +167,7 @@ router.post('/', protect, createCustomer);
  *                 customers:
  *                   type: array
  *                   items:
- *                     $ref: '#/components/schemas/Customer'
+ *                     $ref: '#/components/schemas/Cliente'
  *                 totalCustomers:
  *                   type: integer
  *                   example: 25
@@ -134,10 +181,57 @@ router.post('/', protect, createCustomer);
  *                   type: integer
  *                   example: 10
  *       401:
- *         description: No autorizado (token inválido o no proporcionado)
+ *         description: No autorizado
+ *       500:
+ *         description: Error interno del servidor
  */
 router.get('/', protect, getCustomers);
-
+/**
+ * @swagger
+ * /api/customers/search:
+ *   get:
+ *     summary: Búsqueda rápida de clientes (autocompletado)
+ *     tags: [Clientes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: term
+ *         required: true
+ *         schema:
+ *           type: string
+ *           minLength: 1
+ *         description: Texto para buscar en RUC o nombre (mínimo 1 carácter)
+ *     responses:
+ *       200:
+ *         description: Lista de clientes encontrados (solo campos básicos)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   _id:
+ *                     type: string
+ *                     example: "60b5f7f4a4f8d73444d5f88a"
+ *                   ruc:
+ *                     type: string
+ *                     example: "80012345"
+ *                   name:
+ *                     type: string
+ *                     example: "Juan Pérez"
+ *                   phone:
+ *                     type: string
+ *                     example: "0981123456"
+ *       400:
+ *         description: Término de búsqueda inválido o muy corto
+ *       401:
+ *         description: No autorizado
+ *       500:
+ *         description: Error interno del servidor
+ */
+router.get('/search', protect, searchCustomers);
 /**
  * @swagger
  * /api/customers/{id}:
@@ -152,18 +246,23 @@ router.get('/', protect, getCustomers);
  *         required: true
  *         schema:
  *           type: string
- *         description: ID del cliente
+ *           pattern: "^[0-9a-fA-F]{24}$"
+ *         description: ID del cliente en formato MongoDB
  *     responses:
  *       200:
  *         description: Detalles del cliente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Customer'
+ *               $ref: '#/components/schemas/Cliente'
+ *       400:
+ *         description: ID inválido
+ *       401:
+ *         description: No autorizado
  *       404:
  *         description: Cliente no encontrado
- *       401:
- *         description: No autorizado (token inválido o no proporcionado)
+ *       500:
+ *         description: Error interno del servidor
  */
 router.get('/:id', protect, getCustomerById);
 
@@ -171,7 +270,7 @@ router.get('/:id', protect, getCustomerById);
  * @swagger
  * /api/customers/{id}:
  *   put:
- *     summary: Actualizar un cliente
+ *     summary: Actualizar completamente un cliente
  *     tags: [Clientes]
  *     security:
  *       - bearerAuth: []
@@ -181,50 +280,34 @@ router.get('/:id', protect, getCustomerById);
  *         required: true
  *         schema:
  *           type: string
- *         description: ID del cliente
+ *           pattern: "^[0-9a-fA-F]{24}$"
+ *         description: ID del cliente en formato MongoDB
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             properties:
- *               ruc:
- *                 type: string
- *                 example: "80012345"
- *               name:
- *                 type: string
- *                 example: "Juan Pérez Modificado"
- *               email:
- *                 type: string
- *                 example: "nuevo@email.com"
- *               phone:
- *                 type: string
- *                 example: "0981765432"
- *               address:
- *                 type: object
- *                 properties:
- *                   street:
- *                     type: string
- *                   city:
- *                     type: string
- *                   neighborhood:
- *                     type: string
- *                   reference:
- *                     type: string
+ *             $ref: '#/components/schemas/Cliente'
  *     responses:
  *       200:
  *         description: Cliente actualizado
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Customer'
+ *               $ref: '#/components/schemas/Cliente'
  *       400:
- *         description: Error de validación (RUC duplicado o datos inválidos)
+ *         description: |
+ *           Error de validación:
+ *           - ID inválido
+ *           - RUC inválido
+ *           - Email inválido
+ *           - Teléfono inválido
  *       401:
- *         description: No autorizado (token inválido o no proporcionado)
+ *         description: No autorizado
  *       404:
  *         description: Cliente no encontrado
+ *       500:
+ *         description: Error interno del servidor
  */
 router.put('/:id', protect, updateCustomer);
 
@@ -242,7 +325,8 @@ router.put('/:id', protect, updateCustomer);
  *         required: true
  *         schema:
  *           type: string
- *         description: ID del cliente
+ *           pattern: "^[0-9a-fA-F]{24}$"
+ *         description: ID del cliente en formato MongoDB
  *     responses:
  *       200:
  *         description: Estado del cliente cambiado
@@ -255,99 +339,18 @@ router.put('/:id', protect, updateCustomer);
  *                   type: string
  *                   example: "Cliente desactivado correctamente"
  *                 customer:
- *                   $ref: '#/components/schemas/Customer'
+ *                   $ref: '#/components/schemas/Cliente'
+ *       400:
+ *         description: ID inválido
  *       401:
- *         description: No autorizado (token inválido o no proporcionado)
+ *         description: No autorizado
  *       404:
  *         description: Cliente no encontrado
+ *       500:
+ *         description: Error interno del servidor
  */
 router.patch('/:id/toggle-status', protect, toggleCustomerStatus);
 
-/**
- * @swagger
- * /api/customers/search:
- *   get:
- *     summary: Buscar clientes (para autocompletar)
- *     tags: [Clientes]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: term
- *         required: true
- *         schema:
- *           type: string
- *         description: Texto para buscar en RUC o nombre
- *     responses:
- *       200:
- *         description: Lista de clientes encontrados
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   _id:
- *                     type: string
- *                   ruc:
- *                     type: string
- *                   name:
- *                     type: string
- *                   phone:
- *                     type: string
- *       401:
- *         description: No autorizado (token inválido o no proporcionado)
- */
-router.get('/search', protect, searchCustomers);
 
-/**
- * @swagger
- * components:
- *   schemas:
- *     Customer:
- *       type: object
- *       properties:
- *         _id:
- *           type: string
- *           example: "60b5f7f4a4f8d73444d5f88a"
- *         ruc:
- *           type: string
- *           example: "80012345"
- *         name:
- *           type: string
- *           example: "Juan Pérez"
- *         email:
- *           type: string
- *           example: "juan@empresa.com"
- *         phone:
- *           type: string
- *           example: "0981123456"
- *         address:
- *           type: object
- *           properties:
- *             street:
- *               type: string
- *             city:
- *               type: string
- *             neighborhood:
- *               type: string
- *             reference:
- *               type: string
- *         isActive:
- *           type: boolean
- *           example: true
- *         createdAt:
- *           type: string
- *           format: date-time
- *         updatedAt:
- *           type: string
- *           format: date-time
- *   securitySchemes:
- *     bearerAuth:
- *       type: http
- *       scheme: bearer
- *       bearerFormat: JWT
- */
 
 export default router;

@@ -1,344 +1,381 @@
 import Sale from '../models/sales.js';
+import { body, param, validationResult } from 'express-validator';
+import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 
-// Crear una nueva venta
-export const createSale = async (req, res) => {
-  console.log("Nuevo Producto:", req.body)
-  try {
-    const { products, payment, user, iva, ruc, status, stage, mode } = req.body;
+// Validaciones comunes para datos de venta
+const saleDataValidations = [
+  body('products')
+    .isArray({ min: 1 }).withMessage('Debe incluir al menos un producto')
+    .custom(products => products.every(p => 
+      p.product && p.quantity && p.price && p.totalPrice
+    ).withMessage('Cada producto debe tener product, quantity, price y totalPrice'),
+    
+  body('products.*.totalPrice')
+    .isFloat({ min: 0 }).withMessage('Precio total inválido'),
+    
+  body('payment')
+    .optional()
+    .isArray()
+    .custom((payment, { req }) => {
+      if (payment && payment.length > 0) {
+        const totalPayment = payment.reduce((sum, p) => sum + p.totalAmount, 0);
+        const totalAmount = req.body.products.reduce((sum, p) => sum + p.totalPrice, 0);
+        return totalPayment <= totalAmount;
+      }
+      return true;
+    }).withMessage('El total de pagos excede el monto de la venta'),
+    
+  body('user')
+    .notEmpty().withMessage('El usuario es requerido')
+    .custom((value) => mongoose.Types.ObjectId.isValid(value))
+    .withMessage('ID de usuario no válido'),
+    
+  body('iva')
+    .optional()
+    .isFloat({ min: 0 }).withMessage('IVA debe ser un número positivo'),
+    
+  body('ruc')
+    .optional()
+    .isLength({ max: 20 }).withMessage('RUC demasiado largo'),
+    
+  body('status')
+    .isIn(['pending', 'completed', 'canceled', 'ordered', 'annulled', 'ready'])
+    .withMessage('Estado inválido'),
+    
+  body('stage')
+    .optional()
+    .isIn(['preparing', 'delivered', 'finished', 'closed'])
+    .withMessage('Etapa inválida'),
+    
+  body('mode')
+    .optional()
+    .isIn(['delivery', 'pickup', 'dine-in'])
+    .withMessage('Modo inválido'))
+];
 
-    // Verificar si los productos fueron enviados
-    if (!products || products.length === 0) {
-      return res.status(400).json({ message: 'Debe incluir al menos un producto en la venta.' });
-    }
+// Validación de ID en parámetros
+const idValidation = [
+  param('id')
+    .notEmpty().withMessage('El ID es requerido')
+    .custom((value) => mongoose.Types.ObjectId.isValid(value))
+    .withMessage('ID no válido')
+];
 
-    // Calcular el totalAmount sumando el total de cada producto
-    let totalAmount = 0;
-    products.forEach(product => {
-      totalAmount += product.totalPrice;  // Asumimos que `totalPrice` ya incluye cantidad * precio unitario
+// Middleware para validar resultados
+const validateRequest = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    const formattedErrors = errors.array().map(error => ({
+      field: error.param,
+      message: error.msg,
+      location: error.location,
+      value: error.value
+    }));
+
+    logger.warn('Errores de validación', {
+      path: req.path,
+      method: req.method,
+      errors: formattedErrors
     });
 
-    // Crear una nueva venta
-    const newSale = new Sale({
-      products,
-      totalAmount,  // Total de todos los productos
-      payment,
-      user, ruc, iva, status, stage, mode
+    return res.status(400).json({
+      success: false,
+      message: 'Errores de validación',
+      errors: formattedErrors
     });
-
-    // Guardar la venta en la base de datos
-    await newSale.save();
-
-    // Responder con la venta creada
-    res.status(201).json(newSale);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
   }
+  next();
 };
 
-// Obtener todas las ventas
-export const getSales = async (req, res) => {
-  const {
-    page = 1,
-    limit = 10,
-    user,
-    status,
-    startDate,
-    endDate,
-    paymentMethod,
-    ruc,
-    product, // Nuevo filtro por producto
-  } = req.query;
+export const createSale = [
+  ...saleDataValidations,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const { products, payment, user, iva, ruc, status, stage, mode } = req.body;
 
-  // Función auxiliar para evitar problemas con zonas horarias (formato local)
-  function toLocalDate(dateStr, hours = 0, minutes = 0, seconds = 0, ms = 0) {
-    const [year, month, day] = dateStr.split("-").map(Number);
-    return new Date(year, month - 1, day, hours, minutes, seconds, ms);
+      const totalAmount = products.reduce((sum, p) => sum + p.totalPrice, 0);
+
+      const newSale = new Sale({
+        products,
+        totalAmount,
+        payment: payment || [],
+        user,
+        ruc,
+        iva,
+        status: status || 'pending',
+        stage: stage || 'preparing',
+        mode: mode || 'dine-in'
+      });
+
+      await newSale.save();
+      
+      logger.info(`Venta creada: ${newSale._id}`, { 
+        saleId: newSale._id,
+        userId: user,
+        totalAmount 
+      });
+      
+      res.status(201).json({
+        success: true,
+        message: 'Venta creada exitosamente',
+        data: {
+          id: newSale._id,
+          totalAmount: newSale.totalAmount,
+          status: newSale.status,
+          stage: newSale.stage,
+          date: newSale.date
+        }
+      });
+    } catch (error) {
+      logger.error(`Error al crear venta: ${error.message}`, {
+        body: req.body,
+        stack: error.stack
+      });
+      next(error);
+    }
   }
-  console.log(req.query);
-  try {
-    const query = {}; // Aquí se irán acumulando los filtros
+];
 
-    // Filtrar por usuario
+export const getSales = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      user,
+      status,
+      startDate,
+      endDate,
+      paymentMethod,
+      ruc,
+      product,
+    } = req.query;
+
+    const query = {};
+
     if (user) query.user = user;
-
-    // Filtrar por estado (evitar 'all')
     if (status && status !== "all") query.status = status;
-
-    // Filtrar por método de pago exacto  
     if (paymentMethod) {
-      query.payment = {
-        $elemMatch: { paymentMethod: paymentMethod },
-      };
+      query.payment = { $elemMatch: { paymentMethod } };
     }
-
-
-    // Filtrar por RUC exacto
-    if (ruc) {
-      query.ruc = { $regex: ruc, $options: "i" };
-    }
-
-    // Filtrar por producto dentro del array de productos
+    if (ruc) query.ruc = { $regex: ruc, $options: "i" };
     if (product) {
-      query.products = {
-        $elemMatch: {
-          name: { $regex: new RegExp(product, "i") }, // búsqueda insensible a mayúsculas
-        },
+      query["products.name"] = { $regex: product, $options: "i" };
+    }
+
+    if (startDate && endDate) {
+      const localToUTC = (date, isStart) => {
+        const d = new Date(date);
+        if (isStart) {
+          return new Date(Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate(),
+            3, 0, 0, 0
+          ));
+        } else {
+          return new Date(Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate() + 1,
+            2, 59, 59, 999
+          ));
+        }
       };
+
+      const utcStart = localToUTC(startDate, true);
+      const utcEnd = localToUTC(endDate, false);
+      query.date = { $gte: utcStart, $lte: utcEnd };
     }
 
-    // Filtrar por rango de fechas
-    if (startDate && endDate) {
-      const start = toLocalDate(startDate, 0, 0, 0, 0); // inicio del día
-      const end = toLocalDate(endDate, 23, 59, 59, 999); // fin del día
-      query.date = { $gte: start, $lte: end };
-    }
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const parsedLimit = parseInt(limit);
 
-    const skip = (page - 1) * limit;
+    const [sales, totalSales] = await Promise.all([
+      Sale.find(query)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(parsedLimit)
+        .populate("user", "name")
+        .lean(),
+      Sale.countDocuments(query)
+    ]);
 
-    // Buscar ventas con los filtros, ordenar, paginar y poblar el nombre del usuario
-    const sales = await Sale.find(query)
-      .sort({ date: -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate("user", "name");
-
-    const totalSales = await Sale.countDocuments(query);
+    logger.debug(`Obtenidas ${sales.length} ventas de ${totalSales}`, {
+      queryParams: req.query
+    });
 
     res.status(200).json({
-      sales,
-      totalSales,
-      totalPages: Math.ceil(totalSales / limit),
+      success: true,
+      count: sales.length,
+      totalItems: totalSales,
+      totalPages: Math.ceil(totalSales / parsedLimit),
       currentPage: parseInt(page),
-      limit: parseInt(limit),
+      itemsPerPage: parsedLimit,
+      data: sales
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    logger.error(`Error al obtener ventas: ${error.message}`, {
+      queryParams: req.query
+    });
+    next(error);
   }
 };
 
-export const updateSaleStatus = async (req, res) => {
-  const { id } = req.params;
-  const { status, ruc } = req.body;
-  let stage = "";
-  if (status === "canceled" || status === "annulled") {
-    stage = "closed";
-  } else if (status === "completed") {
-    stage = "delivered"
-  }
-  console.log(id, status)
+export const updateSaleStatus = [
+  ...idValidation,
+  body('status')
+    .optional()
+    .isIn(['pending', 'completed', 'canceled', 'ordered', 'annulled', 'ready'])
+    .withMessage('Estado inválido'),
+  body('ruc')
+    .optional()
+    .isLength({ max: 20 }).withMessage('RUC demasiado largo'),
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { status, ruc } = req.body;
 
-  if (!["pending", "completed", "canceled", "ordered", "annulled", "ready"].includes(status)) {
-    return res.status(400).json({ message: "Estado inválido" });
-  }
+      let stage;
+      if (status === "canceled" || status === "annulled") {
+        stage = "closed";
+      } else if (status === "completed") {
+        stage = "delivered";
+      } else if (status === "ready") {
+        stage = "finished";
+      }
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "ID inválido" });
-  }
+      const update = status !== "ready" ? { status, ruc, stage } : { ruc, stage };
 
-  let updated;
-  try {
-    if (status !== "ready") {
-      updated = await Sale.updateMany(
-        { _id: id },
-        { $set: { status, ruc, stage } }
+      const result = await Sale.findByIdAndUpdate(
+        id,
+        update,
+        { new: true, runValidators: true }
       );
-    } else {
-      stage = "finished"
-      updated = await Sale.updateMany(
-        { _id: id },
-        { $set: { ruc, stage } }
-      );
+
+      if (!result) {
+        logger.warn(`Venta no encontrada para actualización: ${id}`);
+        const error = new Error("Venta no encontrada");
+        error.statusCode = 404;
+        throw error;
+      }
+
+      logger.info(`Estado de venta actualizado: ${result._id}`, {
+        newStatus: status,
+        newStage: stage
+      });
+      
+      res.status(200).json({
+        success: true,
+        message: 'Estado de venta actualizado',
+        data: {
+          id: result._id,
+          status: result.status,
+          stage: result.stage
+        }
+      });
+    } catch (error) {
+      logger.error(`Error al actualizar estado de venta: ${error.message}`, {
+        saleId: req.params.id
+      });
+      next(error);
     }
+  }
+];
 
-    if (updated.modifiedCount === 0) {
-      return res.status(404).json({ message: "Venta no encontrada" });
+export const getSaleById = [
+  ...idValidation,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const sale = await Sale.findById(req.params.id).lean();
+
+      if (!sale) {
+        logger.warn(`Venta no encontrada: ${req.params.id}`);
+        const error = new Error('Venta no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: sale
+      });
+    } catch (error) {
+      logger.error(`Error al obtener venta por ID: ${error.message}`, {
+        saleId: req.params.id
+      });
+      next(error);
     }
-
-    res.status(200).json({ message: "Estado actualizado", result: updated });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
   }
-};
+];
 
+export const updateSale = [
+  ...idValidation,
+  ...saleDataValidations,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const sale = await Sale.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true, runValidators: true }
+      ).lean();
 
+      if (!sale) {
+        logger.warn(`Venta no encontrada para actualización: ${req.params.id}`);
+        const error = new Error('Venta no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
 
-// Obtener una venta por ID
-export const getSaleById = async (req, res, next) => {
-  const { id } = req.params;
-
-  try {
-    const sale = await Sale.findById(id);
-    if (!sale) {
-      return res.status(404).json({ message: 'Sale not found' });
+      logger.info(`Venta actualizada: ${sale._id}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Venta actualizada exitosamente',
+        data: sale
+      });
+    } catch (error) {
+      logger.error(`Error al actualizar venta: ${error.message}`, {
+        saleId: req.params.id
+      });
+      next(error);
     }
-    res.status(200).json(sale);
-  } catch (error) {
-    next(error);
   }
-};
+];
 
-// Actualizar una venta
-export const updateSale = async (req, res, next) => {
-  const { id } = req.params;
-  const { newSale } = req.body;
-  console.log(id, newSale)
-  try {
-    const sale = await Sale.findById(id);
-    if (!sale) {
-      return res.status(404).json({ message: 'Sale not found' });
+export const deleteSale = [
+  ...idValidation,
+  validateRequest,
+  async (req, res, next) => {
+    try {
+      const sale = await Sale.findByIdAndDelete(req.params.id).lean();
+
+      if (!sale) {
+        logger.warn(`Venta no encontrada para eliminación: ${req.params.id}`);
+        const error = new Error('Venta no encontrada');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      logger.info(`Venta eliminada: ${sale._id}`, {
+        totalAmount: sale.totalAmount,
+        status: sale.status
+      });
+      
+      res.status(200).json({
+        success: true,
+        message: 'Venta eliminada exitosamente',
+        data: { id: sale._id }
+      });
+    } catch (error) {
+      logger.error(`Error al eliminar venta: ${error.message}`, {
+        saleId: req.params.id
+      });
+      next(error);
     }
-
-    sale.payment = newSale.payment || sale.payment;
-    sale.status = newSale.status|| sale.status;
-    sale.stage = newSale.stage || sale.stage;
-
-    await sale.save();
-    res.status(200).json({ message: 'Sale updated successfully', sale });
-  } catch (error) {
-    next(error);
   }
-};
-
-// Eliminar una venta
-export const deleteSale = async (req, res, next) => {
-  const { id } = req.params;
-
-  try {
-    const sale = await Sale.findByIdAndDelete(id);
-    if (!sale) {
-      return res.status(404).json({ message: 'Sale not found' });
-    }
-    res.status(200).json({ message: 'Sale deleted successfully' });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getSalesByProduct = async (req, res, next) => {
-  const { page = 1, limit = 10 } = req.query; // Valores por defecto
-
-  try {
-    const sales = await Sale.aggregate([
-      { $unwind: "$items" },
-      { $group: { _id: "$items.product", totalSold: { $sum: "$items.quantity" } } },
-      { $sort: { totalSold: -1 } },
-      { $skip: (page - 1) * limit },
-      { $limit: limit },
-    ]);
-
-    const totalSales = await Sale.aggregate([
-      { $unwind: "$items" },
-      { $group: { _id: "$items.product" } },
-    ]);
-
-    const totalPages = Math.ceil(totalSales.length / limit);
-    const nextPage = page < totalPages ? page + 1 : null;
-    const prevPage = page > 1 ? page - 1 : null;
-
-    res.status(200).json({
-      sales,
-      pagination: {
-        currentPage: page,
-        nextPage,
-        prevPage,
-        totalPages,
-        totalSales: totalSales.length,
-      },
-    });
-  } catch (error) {
-    next(error); // Usar 'next' para manejar el error
-  }
-};
-
-export const getSalesReport = async (req, res, next) => {
-  const { startDate, endDate } = req.query;
-
-  try {
-    let filter = {};
-
-    if (startDate && endDate) {
-      filter.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
-    }
-
-    const totalSales = await Sale.aggregate([
-      { $match: filter },
-      { $group: { _id: null, totalSales: { $sum: "$total" } } },
-    ]);
-
-    res.status(200).json({
-      totalSales: totalSales[0]?.totalSales || 0, // Si no hay ventas, el total es 0
-    });
-  } catch (error) {
-    next(error); // Usar 'next' para manejar el error en un middleware
-  }
-};
-
-export const getSalesByPaymentMethod = async (req, res, next) => {
-  const { page = 1, limit = 10 } = req.query; // Valores por defecto
-
-  try {
-    const sales = await Sale.aggregate([
-      { $group: { _id: "$paymentMethod", totalSales: { $sum: "$total" } } },
-      { $sort: { totalSales: -1 } },
-      { $skip: (page - 1) * limit },
-      { $limit: limit },
-    ]);
-
-    const totalSales = await Sale.aggregate([
-      { $group: { _id: "$paymentMethod" } },
-    ]);
-
-    const totalPages = Math.ceil(totalSales.length / limit);
-    const nextPage = page < totalPages ? page + 1 : null;
-    const prevPage = page > 1 ? page - 1 : null;
-
-    res.status(200).json({
-      sales,
-      pagination: {
-        currentPage: page,
-        nextPage,
-        prevPage,
-        totalPages,
-        totalSales: totalSales.length,
-      },
-    });
-  } catch (error) {
-    next(error); // Usar 'next' para manejar el error
-  }
-};
-
-export const getSalesByStatus = async (req, res, next) => {
-  const { status } = req.query;
-  const { page = 1, limit = 10 } = req.query; // Valores por defecto
-
-  try {
-    const sales = await Sale.aggregate([
-      { $match: { status } },
-      { $group: { _id: "$status", totalSales: { $sum: "$total" } } },
-      { $skip: (page - 1) * limit },
-      { $limit: limit },
-    ]);
-
-    const totalSales = await Sale.aggregate([
-      { $match: { status } },
-    ]);
-
-    const totalPages = Math.ceil(totalSales.length / limit);
-    const nextPage = page < totalPages ? page + 1 : null;
-    const prevPage = page > 1 ? page - 1 : null;
-
-    res.status(200).json({
-      sales,
-      pagination: {
-        currentPage: page,
-        nextPage,
-        prevPage,
-        totalPages,
-        totalSales: totalSales.length,
-      },
-    });
-  } catch (error) {
-    next(error); // Usar 'next' para manejar el error
-  }
-};
+];
