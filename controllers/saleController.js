@@ -7,13 +7,19 @@ import mongoose from 'mongoose';
 const saleDataValidations = [
   body('products')
     .isArray({ min: 1 }).withMessage('Debe incluir al menos un producto')
-    .custom(products => products.every(p => 
-      p.product && p.quantity && p.price && p.totalPrice
-    ).withMessage('Cada producto debe tener product, quantity, price y totalPrice'),
-    
+    .custom(products => {
+      const isValid = products.every(p =>
+        p.productId && p.quantity && p.totalPrice && p.variantId
+      );
+      if (!isValid) {
+        throw new Error('Cada producto debe tener productId, quantity, totalPrice y variantId');
+      }
+      return true;
+    }),
+
   body('products.*.totalPrice')
     .isFloat({ min: 0 }).withMessage('Precio total inválido'),
-    
+
   body('payment')
     .optional()
     .isArray()
@@ -25,33 +31,34 @@ const saleDataValidations = [
       }
       return true;
     }).withMessage('El total de pagos excede el monto de la venta'),
-    
+
   body('user')
     .notEmpty().withMessage('El usuario es requerido')
     .custom((value) => mongoose.Types.ObjectId.isValid(value))
     .withMessage('ID de usuario no válido'),
-    
+
   body('iva')
     .optional()
     .isFloat({ min: 0 }).withMessage('IVA debe ser un número positivo'),
-    
+
   body('ruc')
     .optional()
     .isLength({ max: 20 }).withMessage('RUC demasiado largo'),
-    
+
   body('status')
-    .isIn(['pending', 'completed', 'canceled', 'ordered', 'annulled', 'ready'])
+    .optional()
+    .isIn(['completed', 'pending', 'canceled', 'annulled', 'ordered'])
     .withMessage('Estado inválido'),
-    
+
   body('stage')
     .optional()
-    .isIn(['preparing', 'delivered', 'finished', 'closed'])
+    .isIn(['delivered', 'finished', 'processed', 'closed'])
     .withMessage('Etapa inválida'),
-    
+
   body('mode')
     .optional()
-    .isIn(['delivery', 'pickup', 'dine-in'])
-    .withMessage('Modo inválido'))
+    .isIn(['local', 'carry', 'delivery'])
+    .withMessage('Modo inválido')
 ];
 
 // Validación de ID en parámetros
@@ -110,13 +117,13 @@ export const createSale = [
       });
 
       await newSale.save();
-      
-      logger.info(`Venta creada: ${newSale._id}`, { 
+
+      logger.info(`Venta creada: ${newSale._id}`, {
         saleId: newSale._id,
         userId: user,
-        totalAmount 
+        totalAmount
       });
-      
+
       res.status(201).json({
         success: true,
         message: 'Venta creada exitosamente',
@@ -151,7 +158,6 @@ export const getSales = async (req, res, next) => {
       ruc,
       product,
     } = req.query;
-
     const query = {};
 
     if (user) query.user = user;
@@ -227,7 +233,7 @@ export const updateSaleStatus = [
   ...idValidation,
   body('status')
     .optional()
-    .isIn(['pending', 'completed', 'canceled', 'ordered', 'annulled', 'ready'])
+    .isIn(['completed', 'pending', 'canceled', 'annulled', 'ordered'])
     .withMessage('Estado inválido'),
   body('ruc')
     .optional()
@@ -266,7 +272,7 @@ export const updateSaleStatus = [
         newStatus: status,
         newStage: stage
       });
-      
+
       res.status(200).json({
         success: true,
         message: 'Estado de venta actualizado',
@@ -332,7 +338,7 @@ export const updateSale = [
       }
 
       logger.info(`Venta actualizada: ${sale._id}`);
-      
+
       res.status(200).json({
         success: true,
         message: 'Venta actualizada exitosamente',
@@ -365,7 +371,7 @@ export const deleteSale = [
         totalAmount: sale.totalAmount,
         status: sale.status
       });
-      
+
       res.status(200).json({
         success: true,
         message: 'Venta eliminada exitosamente',

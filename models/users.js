@@ -60,7 +60,8 @@ userSchema.methods.generateToken = function () {
   return jwt.sign(
     {
       id: this._id,
-      role: this.role // Solo incluye datos necesarios
+      role: this.role,
+      name: this.name // Solo incluye datos necesarios
     },
     process.env.JWT_SECRET,
     { expiresIn: '8h' }

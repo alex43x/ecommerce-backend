@@ -581,9 +581,8 @@ export const getWeeklySalesByProducts = async (req, res, next) => {
 //  Búsqueda de variantes
 export const getVariants = async (req, res, next) => {
   const { q } = req.query;
-
   try {
-    if (!q || q.length < 3) {
+    if (!q ) {
       return res.status(400).json({
         success: false,
         message: "El término de búsqueda debe tener al menos 3 caracteres"
@@ -593,7 +592,7 @@ export const getVariants = async (req, res, next) => {
     const results = await Sale.aggregate([
       {
         $match: {
-          status: "completed",
+          status: { $ne: "annulled" },
           "products.name": { $regex: q, $options: "i" }
         }
       },

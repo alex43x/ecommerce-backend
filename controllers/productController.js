@@ -158,7 +158,6 @@ export const getProducts = async (req, res, next) => {
     // Paginación
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const parsedLimit = parseInt(limit);
-
     // Consulta a la base de datos
     const [products, totalProducts] = await Promise.all([
       Product.find(query)
@@ -169,7 +168,6 @@ export const getProducts = async (req, res, next) => {
         .lean(),
       Product.countDocuments(query)
     ]);
-
     logger.debug(`Obtenidos ${products.length} productos de ${totalProducts}`);
 
     // Construcción de la respuesta
