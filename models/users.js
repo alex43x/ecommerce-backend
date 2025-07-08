@@ -18,7 +18,8 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true,
-    minlength: 6
+    minlength: 6,
+    select: false
   },
   role: {
     type: String,
@@ -64,7 +65,7 @@ userSchema.methods.generateToken = function () {
       name: this.name // Solo incluye datos necesarios
     },
     process.env.JWT_SECRET,
-    { expiresIn: '8h' }
+    { expiresIn: '12h' }
   );
 };
 

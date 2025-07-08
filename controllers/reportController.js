@@ -5,7 +5,6 @@ import { getISOWeek, getISOWeekYear } from "date-fns";
 // Configuración de zona horaria de Paraguay (GMT-4 en horario estándar, GMT-3 en horario de verano)
 const PARAGUAY_TIMEZONE_OFFSET = -3; // Ajustar según horario de verano (-3)
 
-// Función para convertir fecha local de Paraguay a UTC
 function toUTCFromParaguay(dateStr, hours = 0, minutes = 0, seconds = 0, ms = 0) {
   const parts = dateStr.split("-").map(Number);
   let year, month, day;
@@ -18,10 +17,12 @@ function toUTCFromParaguay(dateStr, hours = 0, minutes = 0, seconds = 0, ms = 0)
     [day, month, year] = parts;
   }
 
-  const date = new Date(year, month - 1, day, hours, minutes, seconds, ms);
-  date.setHours(date.getHours() - PARAGUAY_TIMEZONE_OFFSET); // Convertir a UTC
-  return date;
+  // Convertimos la fecha como si fuera en Paraguay (UTC-3) a UTC
+  const utcDate = new Date(Date.UTC(year, month - 1, day, hours - PARAGUAY_TIMEZONE_OFFSET, minutes, seconds, ms));
+
+  return utcDate;
 }
+
 
 // Función reutilizable para obtener fechas con zona horaria de Paraguay
 function parseDateRange(startDate, endDate, defaultDays = 30) {
@@ -98,51 +99,57 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
 
     if (startDate) {
       start = toUTCFromParaguay(startDate);
-      start.setHours(0, 0, 0, 0);
       end = new Date(start);
-      end.setDate(start.getDate() + 6);
+      end.setDate(start.getDate() + 7);
+
     } else {
       const today = new Date();
-      today.setHours(0 - PARAGUAY_TIMEZONE_OFFSET, 0, 0, 0);
       end = new Date(today);
       start = new Date(end);
       start.setDate(end.getDate() - 6);
     }
 
     const sales = await Sale.aggregate([
+      { $unwind: "$payment" },
       {
         $match: {
           status: { $ne: "annulled" },
-          date: { $gte: start, $lte: end }
+          "payment.date": { $gte: start, $lte: end }
         }
       },
-      { $unwind: "$payment" },
       {
         $group: {
           _id: {
-            $dateToString: {
-              format: "%Y-%m-%d",
+            $dateTrunc: {
               date: "$payment.date",
-              timezone: `-0${Math.abs(PARAGUAY_TIMEZONE_OFFSET)}:00`
+              unit: "day",
+              timezone: "-03:00" // 👈 Paraguay
             }
           },
-          totalSales: { $sum: "$payment.totalAmount" },
+          totalSales: { $sum: "$payment.totalAmount" }
         }
       },
       {
         $project: {
           _id: 0,
-          date: "$_id",
-          totalSales: 1,
+          date: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: "$_id",
+
+            }
+          },
+          totalSales: 1
         }
       },
       { $sort: { date: 1 } }
     ]);
 
-    // Generar datos para todos los días del rango
+
+    // Generar días esperados
     const days = [];
-    const cursor = new Date(start);
-    while (cursor <= end) {
+    const cursor = new Date(start.setHours(start.getHours() - 3));
+    while (cursor <= end.setHours(end.getHours() - 3)) {
       const dateStr = cursor.toISOString().split("T")[0];
       days.push(dateStr);
       cursor.setDate(cursor.getDate() + 1);
@@ -150,6 +157,7 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
 
     const completeData = days.map(date => {
       const found = sales.find(s => s.date === date);
+
       return {
         date,
         totalSales: found?.totalSales || 0
@@ -165,6 +173,7 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
     next(error);
   }
 };
+
 
 // ✅ Ventas por método de pago (basado en pagos reales)
 export const getSalesByPaymentMethod = async (req, res, next) => {
@@ -582,7 +591,7 @@ export const getWeeklySalesByProducts = async (req, res, next) => {
 export const getVariants = async (req, res, next) => {
   const { q } = req.query;
   try {
-    if (!q ) {
+    if (!q) {
       return res.status(400).json({
         success: false,
         message: "El término de búsqueda debe tener al menos 3 caracteres"
