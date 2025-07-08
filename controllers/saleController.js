@@ -72,6 +72,7 @@ const idValidation = [
 // Middleware para validar resultados
 const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
+  console.log(errors)
   if (!errors.isEmpty()) {
     const formattedErrors = errors.array().map(error => ({
       field: error.param,
@@ -233,7 +234,7 @@ export const updateSaleStatus = [
   ...idValidation,
   body('status')
     .optional()
-    .isIn(['completed', 'pending', 'canceled', 'annulled', 'ordered'])
+    .isIn(['completed', 'pending', 'canceled', 'annulled', 'ordered','ready'])
     .withMessage('Estado inválido'),
   body('ruc')
     .optional()

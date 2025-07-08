@@ -9,20 +9,20 @@ const userDataValidations = [
     .trim()
     .notEmpty().withMessage('El nombre es requerido')
     .isLength({ max: 100 }).withMessage('Máximo 100 caracteres'),
-    
+
   body('email')
     .isEmail().withMessage('Email inválido')
     .normalizeEmail()
     .isLength({ max: 255 }).withMessage('Máximo 255 caracteres'),
-    
+
   body('password')
     .if(body('password').exists())
     .isLength({ min: 6 }).withMessage('Mínimo 6 caracteres')
     .isLength({ max: 100 }).withMessage('Máximo 100 caracteres'),
-    
+
   body('role')
     .isIn(['cashier', 'admin', 'spadmin']).withMessage('Rol inválido'),
-    
+
   body('active')
     .optional()
     .isIn(['enable', 'disable']).withMessage('Estado inválido')
@@ -71,7 +71,7 @@ export const loginUser = async (req, res, next) => {
     
     if (!user || !(await user.matchPassword(password))) {
       logger.warn(`Credenciales inválidas para: ${email}`);
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
         message: 'Credenciales inválidas'
       });
@@ -79,7 +79,7 @@ export const loginUser = async (req, res, next) => {
 
     if (user.active !== 'enable') {
       logger.warn(`Intento de login para cuenta desactivada: ${user._id}`);
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
         message: 'Cuenta desactivada'
       });
@@ -118,7 +118,7 @@ export const createUser = [
   async (req, res, next) => {
     try {
       const { name, email, password, role, active } = req.body;
-      
+
       const user = new User({
         name,
         email,
@@ -290,7 +290,7 @@ export const deleteUser = [
   async (req, res, next) => {
     try {
       const user = await User.findByIdAndDelete(req.params.id);
-      
+
       if (!user) {
         logger.warn(`Usuario no encontrado para eliminación: ${req.params.id}`);
         return res.status(404).json({
