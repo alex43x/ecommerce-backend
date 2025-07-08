@@ -12,7 +12,7 @@ API backend para un sistema de gestión comercial con:
 - Administración de productos y categorías  
 - Procesamiento de ventas y transacciones  
 - Generación de reportes y estadísticas  
-- Integración con frontend y sistemas POS  
+- Integración con frontend (sistema POS)  
 
 ---
 
@@ -25,7 +25,7 @@ API backend para un sistema de gestión comercial con:
 - ✅ Dashboard con métricas comerciales  
 - ✅ Documentación Swagger completa  
 - ✅ Validación de datos robusta  
-- ✅ Manejo centralizado de errores  
+- ✅ Manejo centralizado de errores - Con middleware de errores
 
 ---
 
@@ -42,18 +42,14 @@ API backend para un sistema de gestión comercial con:
 
 ---
 
-## 📁 Estructura del Proyecto
-
----
-
 ## 🔐 Variables de Entorno
 
 | Variable          | Descripción                           | Ejemplo                                 |
 |-------------------|----------------------------------------|-----------------------------------------|
 | `PORT`            | Puerto del servidor                    | `5000`                                  |
 | `MONGODB_URI`     | URL de conexión a MongoDB              | `mongodb://localhost:27017/mydb`        |
-| `JWT_SECRET`      | Secreto para tokens JWT                | `mi_secreto_super_seguro`               |
-| `JWT_EXPIRE`      | Expiración de tokens JWT               | `24h`                                   |
+| `JWT_SECRET`      | Secreto para tokens JWT                | `secreto_super_seguro`               |
+| `JWT_EXPIRE`      | Expiración de tokens JWT               | `12h`                                   |
 | `TIMEZONE_OFFSET` | Offset zona horaria (Paraguay)   | `-3`                                     |
 
 ---
@@ -62,7 +58,6 @@ API backend para un sistema de gestión comercial con:
 
 ### 🔐 Autenticación
 - `POST /api/auth/login` - Inicio de sesión  
-
 
 ### 👤 Usuarios
 - `GET /api/users` - Listar usuarios  
@@ -90,13 +85,12 @@ API backend para un sistema de gestión comercial con:
 - `GET /api/reports/sales/daily` - Ventas por día  
 - `GET /api/reports/sales/cash-closing` - Cierre de caja  
 
----
 
 ## 📄 Documentación API
 
 La documentación Swagger está disponible en:
 
 - **Desarrollo:** [`http://localhost:5000/api-docs`](http://localhost:5000/api-docs)  
-- **Producción:** `https://tudominio.com/api-docs`
+
 
 
