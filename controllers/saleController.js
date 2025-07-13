@@ -1,5 +1,6 @@
 import Sale from '../models/sales.js';
 import { body, param, validationResult } from 'express-validator';
+import { imprimirVenta } from '../middleware/printer.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 
@@ -32,11 +33,7 @@ const saleDataValidations = [
       return true;
     }).withMessage('El total de pagos excede el monto de la venta'),
 
-  body('user')
-    .notEmpty().withMessage('El usuario es requerido')
-    .custom((value) => mongoose.Types.ObjectId.isValid(value))
-    .withMessage('ID de usuario no válido'),
-
+  
   body('iva')
     .optional()
     .isFloat({ min: 0 }).withMessage('IVA debe ser un número positivo'),
@@ -101,8 +98,8 @@ export const createSale = [
   validateRequest,
   async (req, res, next) => {
     try {
-      const { products, payment, user, iva, ruc, status, stage, mode } = req.body;
-
+      const { products, payment, user, iva, ruc, status, stage, mode,customerName } = req.body;
+      console.log(customerName)
       const totalAmount = products.reduce((sum, p) => sum + p.totalPrice, 0);
 
       const newSale = new Sale({
@@ -111,10 +108,11 @@ export const createSale = [
         payment: payment || [],
         user,
         ruc,
+        customerName,
         iva,
         status: status || 'pending',
-        stage: stage || 'preparing',
-        mode: mode || 'dine-in'
+        stage: stage || 'processed',
+        mode: mode || 'local'
       });
 
       await newSale.save();
@@ -124,6 +122,17 @@ export const createSale = [
         userId: user,
         totalAmount
       });
+
+      if (newSale.status === 'completed') {
+        try {
+          const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
+          console.log(saleWithUser)
+          await imprimirVenta(saleWithUser.toObject(), 'MP-4200 TH');
+          logger.info(`Ticket impreso para la venta ${newSale._id}`);
+        } catch (printError) {
+          logger.error(`Error imprimiendo ticket para venta ${newSale._id}: ${printError.message}`);
+        }
+      }
 
       res.status(201).json({
         success: true,
@@ -234,7 +243,7 @@ export const updateSaleStatus = [
   ...idValidation,
   body('status')
     .optional()
-    .isIn(['completed', 'pending', 'canceled', 'annulled', 'ordered','ready'])
+    .isIn(['completed', 'pending', 'canceled', 'annulled', 'ordered', 'ready'])
     .withMessage('Estado inválido'),
   body('ruc')
     .optional()
@@ -273,6 +282,7 @@ export const updateSaleStatus = [
         newStatus: status,
         newStage: stage
       });
+
 
       res.status(200).json({
         success: true,
@@ -329,7 +339,7 @@ export const updateSale = [
         req.params.id,
         req.body,
         { new: true, runValidators: true }
-      ).lean();
+      ).populate('user', 'name').lean();
 
       if (!sale) {
         logger.warn(`Venta no encontrada para actualización: ${req.params.id}`);
@@ -339,6 +349,15 @@ export const updateSale = [
       }
 
       logger.info(`Venta actualizada: ${sale._id}`);
+
+      if (sale.status === 'completed') {
+        try {
+          await imprimirVenta(sale, 'MP-4200 TH');
+          logger.info(`Ticket impreso para la venta ${sale._id}`);
+        } catch (printError) {
+          logger.error(`Error imprimiendo ticket para venta ${sale._id}: ${printError.message}`);
+        }
+      }
 
       res.status(200).json({
         success: true,
@@ -353,6 +372,7 @@ export const updateSale = [
     }
   }
 ];
+
 
 export const deleteSale = [
   ...idValidation,

@@ -17,6 +17,7 @@ const saleSchema = new mongoose.Schema({
   }],
   totalAmount: { type: Number, required: true }, //Monto total de la venta
   ruc: { type: String, required: true },
+  customerName: { type: String, required: true },
   payment: [{//Array de Pagos
     paymentMethod: { type: String, required: true, enum: ['cash', 'card', 'qr', 'transfer'] },//Método de Pago
     totalAmount: { type: Number, required: true }, //Cantidad pagada con el método de pago
