@@ -1,3 +1,5 @@
 .env
 Dockerfile
 createAdmin.js
+ticket.pdf
+kitchen_ticket.pdf
