@@ -1,5 +1,6 @@
 import Customer from '../models/customer.js';
 import mongoose from 'mongoose';
+import logger from '../config/logger.js';
 
 // Crear un nuevo cliente
 export const createCustomer = async (req, res, next) => {

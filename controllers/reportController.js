@@ -1,5 +1,6 @@
 import Sale from "../models/sales.js";
 import mongoose from "mongoose";
+import logger from '../config/logger.js';
 import { getISOWeek, getISOWeekYear } from "date-fns";
 
 // Configuración de zona horaria de Paraguay (GMT-4 en horario estándar, GMT-3 en horario de verano)
@@ -91,7 +92,6 @@ export const getSalesTotalAllPeriods = async (req, res, next) => {
   }
 };
 
-// ✅ Ventas por día (últimos 7 días)
 export const getSalesByDayLast7Days = async (req, res, next) => {
   try {
     const { startDate } = req.query;
@@ -101,7 +101,6 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
       start = toUTCFromParaguay(startDate);
       end = new Date(start);
       end.setDate(start.getDate() + 7);
-
     } else {
       const today = new Date();
       end = new Date(today);
@@ -120,10 +119,10 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
       {
         $group: {
           _id: {
-            $dateTrunc: {
+            $dateToString: {
+              format: "%Y-%m-%d",
               date: "$payment.date",
-              unit: "day",
-              timezone: "-03:00" // 👈 Paraguay
+              timezone: "-03:00"
             }
           },
           totalSales: { $sum: "$payment.totalAmount" }
@@ -132,28 +131,25 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
       {
         $project: {
           _id: 0,
-          date: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$_id",
-
-            }
-          },
+          date: "$_id",
           totalSales: 1
         }
       },
       { $sort: { date: 1 } }
     ]);
 
-
     // Generar días esperados
     const days = [];
-    const cursor = new Date(start.setHours(start.getHours() - 3));
-    while (cursor <= end.setHours(end.getHours() - 3)) {
+    const cursor = new Date(start);
+    const endDate = new Date(end);
+    endDate.setHours(0, 0, 0, 0); // Llevar end a medianoche inicio del día
+
+    while (cursor <= endDate) {
       const dateStr = cursor.toISOString().split("T")[0];
       days.push(dateStr);
       cursor.setDate(cursor.getDate() + 1);
     }
+
 
     const completeData = days.map(date => {
       const found = sales.find(s => s.date === date);
@@ -173,6 +169,7 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
     next(error);
   }
 };
+
 
 
 // ✅ Ventas por método de pago (basado en pagos reales)

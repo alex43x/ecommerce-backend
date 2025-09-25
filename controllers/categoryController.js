@@ -94,7 +94,7 @@ export const createCategory = [
 
 export const getCategories = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, search } = req.query;
+    const { page = 1, limit = 30, search } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const parsedLimit = parseInt(limit);
 
