@@ -14,16 +14,14 @@ const translateMode = {
 };
 
 // Formato de fecha a GMT-3
-
 function restar3HorasYFormatear(fechaISO) {
     const fecha = new Date(fechaISO);
-    fecha.setUTCHours(fecha.getUTCHours() - 3); // Restamos 3 horas EN UTC
+    fecha.setUTCHours(fecha.getUTCHours() - 3);
 
-    // Opciones para formatear en español, forzando UTC+0 (Zulu)
     const opciones = {
-        timeZone: 'UTC', // Clave: mantener todo en UTC
+        timeZone: 'UTC',
         day: 'numeric',
-        month: 'long',
+        month: 'numeric',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
@@ -34,64 +32,63 @@ function restar3HorasYFormatear(fechaISO) {
     return fecha.toLocaleString('es-ES', opciones);
 }
 
-// Ejemplo de uso:
-const fechaOriginal = "2025-07-13T19:53:26.639Z";
-const fechaLegible = restar3HorasYFormatear(fechaOriginal);
-console.log(fechaLegible); // "13 de julio de 2025, 16:53:26"
-
-
-
-
 /**
  * Genera el PDF del ticket de venta.
  * @param {Object} sale - Objeto venta completo
  * @returns {Promise<void>}
  */
 function generarPDFTicket(sale) {
-    console.log(sale.date)
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({ size: [220, 600], margin: 5 });
         const stream = fs.createWriteStream(TICKET_PATH);
         doc.pipe(stream);
 
-        doc.fontSize(14).text('Eso Que Te Gusta', { align: 'center' });
-        doc.fontSize(10).text('Oliva entre 14 de Mayo y 15 de Agosto', { align: 'center' });
-        doc.fontSize(10).text('Tel: 0991 401621', { align: 'center' });
+        // Agregar logo centrado
+        try {
+            const imagePath = './assets/logo.png';
+            const pageWidth = 220;
+            const imageWidth = 80;
+            const x = (pageWidth - imageWidth) / 2;
+            doc.image('./assets/logo.png', x, undefined, { width: imageWidth });
+
+        } catch (err) {
+            console.error('⚠️ No se pudo cargar la imagen:', err.message);
+        }
+
+        doc.fontSize(10).text('Eso Que Te Gusta', { align: 'center' });
+        doc.fontSize(9).text('Oliva entre 14 de Mayo y 15 de Agosto', { align: 'center' });
+        doc.fontSize(9).text('Tel: 0991 401621', { align: 'center' });
         doc.moveDown();
 
-        doc.text('------------------------------------------------------', { align: 'center' });
-        doc.fontSize(12).text('Comprobante de Pago', { align: 'center' });
-        doc.fontSize(10).text('----------------------------------------------------', { align: 'center' });
-        doc.moveDown();
+        doc.fontSize(10).text('Comprobante de Pago', { align: 'center' });
 
-        doc.fontSize(10).text(`RUC Cliente: ${sale.ruc}`);
-        doc.fontSize(10).text(`${sale.customerName}`);
+        doc.fontSize(9).text(`RUC: ${sale.ruc}`);
+        doc.fontSize(9).text(`${sale.customerName}`);
         doc.text(`Fecha: ${restar3HorasYFormatear(sale.date)}`);
-        doc.text(`Código: ${sale._id}`);
+        doc.text(`Código: ${sale.dailyId}`);
         doc.text(`Vendedor: ${sale.user?.name || '---'}  Consumo:${translateMode[sale.mode] || sale.mode}`);
-        doc.text('------------------------------------------------------', { align: 'center' });
 
         doc.moveDown();
-        doc.fontSize(12).text('Detalle:', { underline: true });
+        doc.fontSize(10).text('Detalle:', { underline: true });
 
         sale.products.forEach(p => {
             const totalGs = p.totalPrice.toLocaleString("es-PY");
-            doc.fontSize(10).text(`${p.quantity} x ${p.name}`);
-            doc.text(`${totalGs} Gs`, { align: 'right' });
+            doc.fontSize(9)
+                .text(`${p.quantity} x ${p.name}`, { continued: true })
+                .text(`${totalGs} Gs`, { align: 'right' });
         });
+
         doc.text('---------------------------------------------------------', { align: 'center' });
 
-        doc.moveDown();
         const roundedSubtotal = Math.round(sale.totalAmount / 1.1);
         doc.fontSize(10).text(`Subtotal: ${roundedSubtotal.toLocaleString("es-PY")} Gs`, { align: 'left' });
         doc.text(`IVA 10%: ${sale.iva.toLocaleString("es-PY")} Gs`, { align: 'left' });
-        doc.fontSize(12).text(`TOTAL: ${sale.totalAmount.toLocaleString("es-PY")} Gs`, { align: 'left' });
+        doc.fontSize(10).text(`Total: ${sale.totalAmount.toLocaleString("es-PY")} Gs`, { align: 'left' });
 
-        doc.moveDown();
-        doc.fontSize(10).text('----------------------------------------------------', { align: 'center' });
+        doc.fontSize(9).text('---------------------------------------------------------', { align: 'center' });
 
         if (sale.payment?.length) {
-            doc.fontSize(11).text('Método(s) de Pago:');
+            doc.fontSize(10).text('Método(s) de Pago:');
             sale.payment.forEach(p => {
                 const metodo = {
                     cash: 'Efectivo',
@@ -101,15 +98,12 @@ function generarPDFTicket(sale) {
                 }[p.paymentMethod] || p.paymentMethod;
 
                 const monto = p.totalAmount.toLocaleString("es-PY");
-                doc.fontSize(10).text(`- ${metodo}: ${monto} Gs`);
+                doc.fontSize(9).text(`- ${metodo}: ${monto} Gs`);
             });
         }
 
         doc.moveDown();
-        doc.text('---------------------------------------------------------', { align: 'center' });
-        doc.fontSize(11).text('¡Gracias por su compra, vuelva pronto!', { align: 'center' });
-        doc.text('------------------------------------------------------', { align: 'center' });
-
+        doc.fontSize(9).text('¡Gracias por su compra, vuelva pronto!', { align: 'center' });
         doc.end();
 
         stream.on('finish', () => resolve());
@@ -132,7 +126,7 @@ export async function imprimirVenta(sale, printerName) {
         logger.info("Ticket enviado a la impresora");
     } catch (error) {
         logger.error('Error imprimiendo el ticket:', error.message);
-        console.log(error)
+        console.log(error);
         throw error;
     }
 }

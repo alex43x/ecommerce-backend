@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
+import Counter from "./counter.js";
 
 const saleSchema = new mongoose.Schema({
+  dailyId: { type: Number },
   products: [{
     productId: { // ← ID del PRODUCTO (no de la variante)
       type: mongoose.Schema.Types.ObjectId,
@@ -40,6 +42,21 @@ const saleSchema = new mongoose.Schema({
   Closed: Terminado, por anulación o cancelación*/
   mode: { type: String, enum: ['local', 'carry', 'delivery'], required: true },//Modo de venta (En local, para llevar o delivery)
   date: { type: Date, default: Date.now }//Fecha en la que se realizó la orden
+});
+
+saleSchema.pre("save", async function (next) {
+  if (!this.isNew) return next();
+
+  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+  const counter = await Counter.findOneAndUpdate(
+    { date: today },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+
+  this.dailyId = counter.seq;
+  next();
 });
 
 const Sale = mongoose.model('Sale', saleSchema);

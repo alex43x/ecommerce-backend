@@ -1,6 +1,7 @@
 import Sale from '../models/sales.js';
 import { body, param, validationResult } from 'express-validator';
 import { imprimirVenta } from '../middleware/printer.js';
+import { imprimirOrdenCocina } from '../middleware/order.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 
@@ -33,7 +34,7 @@ const saleDataValidations = [
       return true;
     }).withMessage('El total de pagos excede el monto de la venta'),
 
-  
+
   body('iva')
     .optional()
     .isFloat({ min: 0 }).withMessage('IVA debe ser un número positivo'),
@@ -98,7 +99,7 @@ export const createSale = [
   validateRequest,
   async (req, res, next) => {
     try {
-      const { products, payment, user, iva, ruc, status, stage, mode,customerName } = req.body;
+      const { products, payment, user, iva, ruc, status, stage, mode, customerName } = req.body;
       console.log(customerName)
       const totalAmount = products.reduce((sum, p) => sum + p.totalPrice, 0);
 
@@ -123,16 +124,25 @@ export const createSale = [
         totalAmount
       });
 
+      
       if (newSale.status === 'completed') {
         try {
           const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
-          console.log(saleWithUser)
           await imprimirVenta(saleWithUser.toObject(), 'MP-4200 TH');
           logger.info(`Ticket impreso para la venta ${newSale._id}`);
         } catch (printError) {
           logger.error(`Error imprimiendo ticket para venta ${newSale._id}: ${printError.message}`);
         }
+      } else {
+        try {
+          const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
+          await imprimirOrdenCocina(saleWithUser.toObject(), 'MP-4200 TH'); 
+          logger.info(`Orden de cocina impresa para la venta ${newSale._id}`);
+        } catch (printError) {
+          logger.error(`Error imprimiendo orden de cocina ${newSale._id}: ${printError.message}`);
+        }
       }
+
 
       res.status(201).json({
         success: true,
