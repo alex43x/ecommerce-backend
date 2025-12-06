@@ -6,19 +6,24 @@ const { print } = pkg;
 
 const TICKET_PATH = './ticket.pdf';
 
-// Traducción del modo de venta
 const translateMode = {
     local: 'En local',
     carry: 'Para llevar',
     delivery: 'Delivery'
 };
 
-// Formato de fecha a GMT-3
+// Constantes de diseño para cálculo de altura
+const LINE_HEIGHT_RATIO = 1.15; // Factor de espacio entre líneas
+const FONT_SIZE_REGULAR = 9;
+const FONT_SIZE_LARGE = 10;
+const PAGE_WIDTH = 210; // Ancho útil después de márgenes
+const MARGIN = 5;
+const IMAGE_HEIGHT = 50; // Altura estimada del logo
+
 function restar3HorasYFormatear(fechaISO) {
     const fecha = new Date(fechaISO);
     fecha.setUTCHours(fecha.getUTCHours() - 3);
-
-    const opciones = {
+    return fecha.toLocaleString('es-ES', {
         timeZone: 'UTC',
         day: 'numeric',
         month: 'numeric',
@@ -27,32 +32,61 @@ function restar3HorasYFormatear(fechaISO) {
         minute: '2-digit',
         second: '2-digit',
         hour12: false
-    };
-
-    return fecha.toLocaleString('es-ES', opciones);
+    });
 }
 
 /**
- * Genera el PDF del ticket de venta.
- * @param {Object} sale - Objeto venta completo
- * @returns {Promise<void>}
+ * Calcula la altura necesaria sin crear un PDF temporal
+ */
+/**
+ * Calcula la altura necesaria - versión optimizada y precisa
+ */
+function calcularAlturaNecesaria(sale) {
+    // Constantes de altura
+    const ALTURA_LINEA_REGULAR = 10.35; // 9 * 1.15
+    const ALTURA_LINEA_LARGE = 11.5;    // 10 * 1.15
+
+    let alturaTotal = 240; // Ajusta este valor según pruebas
+
+    // Agregar altura de productos
+    alturaTotal += ALTURA_LINEA_REGULAR * sale.products.length;
+
+    // Agregar altura de métodos de pago si existen
+    if (sale.payment?.length) {
+        alturaTotal += ALTURA_LINEA_LARGE; // Título
+        alturaTotal += ALTURA_LINEA_REGULAR * sale.payment.length;
+    }
+
+    // Asegurar un mínimo y redondear hacia arriba
+    return Math.ceil(alturaTotal);
+}
+
+/**
+ * Genera el PDF del ticket con altura automática precisa
  */
 function generarPDFTicket(sale) {
     return new Promise((resolve, reject) => {
-        const doc = new PDFDocument({ size: [220, 600], margin: 5 });
+        const alturaCalculada = calcularAlturaNecesaria(sale);
+        const doc = new PDFDocument({
+            size: [220, alturaCalculada],
+            margin: MARGIN
+        });
+
         const stream = fs.createWriteStream(TICKET_PATH);
         doc.pipe(stream);
 
-        // Agregar logo centrado
-        try {
-            const imagePath = './assets/logo.png';
-            const pageWidth = 220;
-            const imageWidth = 80;
-            const x = (pageWidth - imageWidth) / 2;
-            doc.image('./assets/logo.png', x, undefined, { width: imageWidth });
+        const pageWidth = 210; // 220 - 2*5 de margen
+        const imageWidth = 50;
+        const x = (pageWidth - imageWidth) / 2;
 
-        } catch (err) {
-            console.error('⚠️ No se pudo cargar la imagen:', err.message);
+        try {
+            doc.image('./assets/logo.png', x, undefined, {
+                width: imageWidth,
+                height: IMAGE_HEIGHT
+            });
+        } catch (error) {
+            // Si no hay logo, continuamos sin él
+            logger.warn('Logo no encontrado, continuando sin él');
         }
 
         doc.fontSize(10).text('Eso Que Te Gusta', { align: 'center' });
@@ -62,11 +96,10 @@ function generarPDFTicket(sale) {
 
         doc.fontSize(10).text('Comprobante de Pago', { align: 'center' });
 
-        doc.fontSize(9).text(`RUC: ${sale.ruc}`);
-        doc.fontSize(9).text(`${sale.customerName}`);
+        doc.fontSize(8).text(`RUC: ${sale.ruc}  Código: ${sale.dailyId} `); 
+        doc.text(`${sale.customerName}`);
         doc.text(`Fecha: ${restar3HorasYFormatear(sale.date)}`);
-        doc.text(`Código: ${sale.dailyId}`);
-        doc.text(`Vendedor: ${sale.user?.name || '---'}  Consumo:${translateMode[sale.mode] || sale.mode}`);
+        doc.text(`Vendedor: ${sale.user?.name || '---'}  Consumo: ${translateMode[sale.mode]}`);
 
         doc.moveDown();
         doc.fontSize(10).text('Detalle:', { underline: true });
@@ -81,14 +114,13 @@ function generarPDFTicket(sale) {
         doc.text('---------------------------------------------------------', { align: 'center' });
 
         const roundedSubtotal = Math.round(sale.totalAmount / 1.1);
-        doc.fontSize(10).text(`Subtotal: ${roundedSubtotal.toLocaleString("es-PY")} Gs`, { align: 'left' });
-        doc.text(`IVA 10%: ${sale.iva.toLocaleString("es-PY")} Gs`, { align: 'left' });
-        doc.fontSize(10).text(`Total: ${sale.totalAmount.toLocaleString("es-PY")} Gs`, { align: 'left' });
+        doc.fontSize(8).text(`Subtotal: ${roundedSubtotal.toLocaleString("es-PY")} Gs    IVA 10%: ${sale.iva.toLocaleString("es-PY")} Gs`);
+        doc.fontSize(10).text(`Total: ${sale.totalAmount.toLocaleString("es-PY")} Gs`);
 
-        doc.fontSize(9).text('---------------------------------------------------------', { align: 'center' });
+        doc.text('---------------------------------------------------------', { align: 'center' });
 
         if (sale.payment?.length) {
-            doc.fontSize(10).text('Método(s) de Pago:');
+            doc.fontSize(9).text('Método(s) de Pago:');
             sale.payment.forEach(p => {
                 const metodo = {
                     cash: 'Efectivo',
@@ -97,25 +129,20 @@ function generarPDFTicket(sale) {
                     transfer: 'Transferencia'
                 }[p.paymentMethod] || p.paymentMethod;
 
-                const monto = p.totalAmount.toLocaleString("es-PY");
-                doc.fontSize(9).text(`- ${metodo}: ${monto} Gs`);
+                doc.fontSize(8).text(`- ${metodo}: ${p.totalAmount.toLocaleString("es-PY")} Gs`);
             });
         }
 
         doc.moveDown();
         doc.fontSize(9).text('¡Gracias por su compra, vuelva pronto!', { align: 'center' });
+
         doc.end();
 
-        stream.on('finish', () => resolve());
+        stream.on('finish', resolve);
         stream.on('error', reject);
     });
 }
 
-/**
- * Imprime la venta recibida: genera el PDF y envía a la impresora.
- * @param {Object} sale - Objeto de venta completo (con user poblado)
- * @param {string} printerName - Nombre exacto de la impresora
- */
 export async function imprimirVenta(sale, printerName) {
     try {
         await generarPDFTicket(sale);
@@ -126,7 +153,6 @@ export async function imprimirVenta(sale, printerName) {
         logger.info("Ticket enviado a la impresora");
     } catch (error) {
         logger.error('Error imprimiendo el ticket:', error.message);
-        console.log(error);
         throw error;
     }
 }

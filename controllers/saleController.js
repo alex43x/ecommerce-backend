@@ -175,6 +175,7 @@ export const getSales = async (req, res, next) => {
       startDate,
       endDate,
       paymentMethod,
+      dailyId,
       ruc,
       product,
     } = req.query;
@@ -182,6 +183,7 @@ export const getSales = async (req, res, next) => {
 
     if (user) query.user = user;
     if (status && status !== "all") query.status = status;
+    if (dailyId) query.dailyId = dailyId;
     if (paymentMethod) {
       query.payment = { $elemMatch: { paymentMethod } };
     }
