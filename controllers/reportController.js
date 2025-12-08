@@ -302,7 +302,7 @@ export const getSalesByCategory = async (req, res, next) => {
     const sales = await Sale.aggregate([
       {
         $match: {
-          status: { $ne: "annulled" },
+          status: {$in:["completed","ordered"]} ,
           date: { $gte: start, $lte: end }
         }
       },
@@ -316,10 +316,9 @@ export const getSalesByCategory = async (req, res, next) => {
         }
       },
       { $unwind: "$productInfo" },
-      { $unwind: "$productInfo.category" },
       {
         $group: {
-          _id: "$productInfo.category",
+          _id: { $arrayElemAt: ["$productInfo.category", 0] },
           totalSales: { $sum: "$products.totalPrice" },
           transactionCount: { $sum: 1 },
         }
