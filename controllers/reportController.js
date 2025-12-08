@@ -176,7 +176,7 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
 export const getSalesByPaymentMethod = async (req, res, next) => {
   const { startDate, endDate } = req.query;
   const { start, end } = parseDateRange(startDate, endDate);
-
+  
   try {
     const sales = await Sale.aggregate([
       {
@@ -190,28 +190,31 @@ export const getSalesByPaymentMethod = async (req, res, next) => {
         $group: {
           _id: "$payment.paymentMethod",
           totalSales: { $sum: "$payment.totalAmount" },
-          transactionCount: { $sum: 1 },
+          transactionCount: { $sum: 1 }
         }
       },
       {
         $project: {
           _id: 0,
-          paymentMethod: "$_id",
           totalSales: 1,
           transactionCount: 1,
+          paymentMethod: "$_id"
         }
+      },
+      {
+        $sort: { paymentMethod: 1 }
       }
     ]);
-
+    
     res.status(200).json({
       success: true,
       data: sales
     });
   } catch (error) {
-    logger.error(`Error en getSalesByPaymentMethod: ${error.message}`, {
+    logger.error`Error en getSalesByPaymentMethod: ${error.message}`, {
       queryParams: req.query,
       stack: error.stack
-    });
+    };
     next(error);
   }
 };
