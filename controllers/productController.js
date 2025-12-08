@@ -1,4 +1,5 @@
 import { Product } from "../models/product.js";
+import Sale from "../models/sales.js";
 import { body, param, validationResult } from 'express-validator';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
@@ -9,38 +10,38 @@ const productDataValidations = [
     .trim()
     .notEmpty().withMessage('El nombre es requerido')
     .isLength({ max: 100 }).withMessage('Máximo 100 caracteres'),
-    
+
   body('description')
     .optional()
     .isLength({ max: 500 }).withMessage('Máximo 500 caracteres'),
-    
+
   body('category')
     .notEmpty().withMessage('La categoría es requerida')
     .isLength({ max: 50 }).withMessage('Máximo 50 caracteres'),
-    
+
   body('price')
     .isFloat({ min: 0 }).withMessage('El precio debe ser un número positivo'),
-    
+
   body('cost')
     .optional()
     .isFloat({ min: 0 }).withMessage('El costo debe ser un número positivo'),
-    
+
   body('stock')
     .optional()
     .isInt({ min: 0 }).withMessage('El stock debe ser un entero positivo'),
-    
+
   body('variants.*.name')
     .optional()
     .isLength({ max: 50 }).withMessage('Máximo 50 caracteres para el nombre de variante'),
-    
+
   body('variants.*.barcode')
     .optional()
     .isLength({ max: 50 }).withMessage('Máximo 50 caracteres para el código de barras'),
-    
+
   body('variants.*.price')
     .optional()
     .isFloat({ min: 0 }).withMessage('El precio de variante debe ser un número positivo'),
-    
+
   body('active')
     .optional()
     .isBoolean().withMessage('El estado activo debe ser un valor booleano')
@@ -94,9 +95,9 @@ export const createProduct = [
     try {
       const newProduct = new Product(req.body);
       await newProduct.save();
-      
+
       logger.info(`Producto creado: ${newProduct._id}`, { productId: newProduct._id });
-      
+
       res.status(201).json({
         success: true,
         message: 'Producto creado exitosamente',
@@ -124,15 +125,14 @@ export const getProducts = async (req, res, next) => {
   const { page = 1, limit = 10, category, search, sortBy } = req.query;
 
   try {
-    // Construcción de la consulta de filtro
     const query = {};
-    
+
     if (category === 'noBebidas') {
       query.category = { $ne: 'Bebidas' };
     } else if (category) {
       query.category = category;
     }
-    
+
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
@@ -140,38 +140,84 @@ export const getProducts = async (req, res, next) => {
       ];
     }
 
-    // Ordenamiento
-    let sort = {};
-    const sortOptions = {
-      'priceAsc': { price: 1 },
-      'priceDesc': { price: -1 },
-      'nameAsc': { name: 1 },
-      'nameDesc': { name: -1 },
-      'dateAsc': { createdAt: 1 },
-      'dateDesc': { createdAt: -1 }
-    };
-    
-    if (sortBy && sortOptions[sortBy]) {
-      sort = sortOptions[sortBy];
-    }
-
-    // Paginación
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const parsedLimit = parseInt(limit);
-    // Consulta a la base de datos
-    const [products, totalProducts] = await Promise.all([
-      Product.find(query)
-        .skip(skip)
-        .limit(parsedLimit)
-        .collation({ locale: "en", strength: 1 })
-        .sort(sort)
-        .lean(),
-      Product.countDocuments(query)
-    ]);
-    logger.debug(`Obtenidos ${products.length} productos de ${totalProducts}`);
 
-    // Construcción de la respuesta
-    const response = {
+    let products = [];
+    let totalProducts = 0;
+
+    // Caso especial: categoría "desayuno" -> ordenar por más vendido hoy
+    if (category === 'Desayuno') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Agregamos las ventas del día
+      const mostSoldToday = await Sale.aggregate([
+        { $match: { date: { $gte: today }, status: 'completed' } },
+        { $unwind: "$products" },
+        {
+          $lookup: {
+            from: "products",
+            localField: "products.productId",
+            foreignField: "_id",
+            as: "productInfo"
+          }
+        },
+        { $unwind: "$productInfo" },
+        { $match: { "productInfo.category": "Desayuno" } },
+        {
+          $group: {
+            _id: "$products.productId",
+            totalSold: { $sum: "$products.quantity" }
+          }
+        },
+        { $sort: { totalSold: -1 } }
+      ]);
+
+      const sortedProductIds = mostSoldToday.map(p => p._id);
+      console.log("Productos más vendidos hoy en Desayuno:", mostSoldToday, sortedProductIds);
+      // Traemos los productos
+      const allProducts = await Product.find({ _id: { $in: sortedProductIds } })
+        .lean();
+      console.log("Todos los productos encontrados:", allProducts);
+      const orderMap = {};
+      sortedProductIds.forEach((id, index) => {
+        orderMap[id.toString()] = index;
+      });
+
+      allProducts.sort((a, b) => orderMap[a._id.toString()] - orderMap[b._id.toString()]);
+
+      // Ordenamos según el ranking de ventas
+
+      // Paginación manual
+      products = allProducts.slice(skip, skip + parsedLimit);
+      totalProducts = allProducts.length;
+
+    } else {
+      // Caso normal para otras categorías
+      let sort = {};
+      const sortOptions = {
+        'priceAsc': { price: 1 },
+        'priceDesc': { price: -1 },
+        'nameAsc': { name: 1 },
+        'nameDesc': { name: -1 },
+        'dateAsc': { createdAt: 1 },
+        'dateDesc': { createdAt: -1 }
+      };
+      if (sortBy && sortOptions[sortBy]) sort = sortOptions[sortBy];
+
+      [products, totalProducts] = await Promise.all([
+        Product.find(query)
+          .skip(skip)
+          .limit(parsedLimit)
+          .collation({ locale: "en", strength: 1 })
+          .sort(sort)
+          .lean(),
+        Product.countDocuments(query)
+      ]);
+    }
+
+    res.status(200).json({
       success: true,
       count: products.length,
       totalItems: totalProducts,
@@ -179,14 +225,9 @@ export const getProducts = async (req, res, next) => {
       currentPage: parseInt(page),
       itemsPerPage: parsedLimit,
       data: products
-    };
-
-    res.status(200).json(response);
+    });
 
   } catch (error) {
-    logger.error(`Error al obtener productos: ${error.message}`, {
-      queryParams: req.query
-    });
     next(error);
   }
 };
@@ -197,7 +238,7 @@ export const getProductbyID = [
   async (req, res, next) => {
     try {
       const product = await Product.findById(req.params.id).lean();
-      
+
       if (!product) {
         logger.warn(`Producto no encontrado: ${req.params.id}`);
         const error = new Error('Producto no encontrado');
@@ -226,8 +267,8 @@ export const updateProduct = [
   async (req, res, next) => {
     try {
       const updatedProduct = await Product.findByIdAndUpdate(
-        req.params.id, 
-        req.body, 
+        req.params.id,
+        req.body,
         { new: true, runValidators: true }
       ).lean();
 
@@ -239,7 +280,7 @@ export const updateProduct = [
       }
 
       logger.info(`Producto actualizado: ${updatedProduct._id}`);
-      
+
       res.status(200).json({
         success: true,
         message: 'Producto actualizado exitosamente',
@@ -276,7 +317,7 @@ export const deleteProduct = [
       }
 
       logger.info(`Producto eliminado: ${product._id}`);
-      
+
       res.status(200).json({
         success: true,
         message: 'Producto eliminado exitosamente',
@@ -318,7 +359,7 @@ export const getProductByBarcode = [
   async (req, res, next) => {
     try {
       const { barcode } = req.params;
-      
+
       const result = await Product.aggregate([
         { $match: { "variants.barcode": barcode } },
         { $unwind: "$variants" },
