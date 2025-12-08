@@ -18,7 +18,7 @@ import errorHandler from './middleware/errorMiddleware.js';
 
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutos de ventana
-    max: 800, // Limitar a 300 solicitudes por IP
+    max: 2500, // Limitar a 2500 solicitudes por IP
     message: 'Demasiadas solicitudes desde esta IP, por favor intenta nuevamente en 15 minutos',
 });
 
