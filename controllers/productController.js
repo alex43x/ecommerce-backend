@@ -151,7 +151,6 @@ export const getProducts = async (req, res, next) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Agregamos las ventas del día
       const mostSoldToday = await Sale.aggregate([
         { $match: { date: { $gte: today }, status: 'completed' } },
         { $unwind: "$products" },
@@ -170,29 +169,25 @@ export const getProducts = async (req, res, next) => {
             _id: "$products.productId",
             totalSold: { $sum: "$products.quantity" }
           }
-        },
-        { $sort: { totalSold: -1 } }
+        }
       ]);
 
-      const sortedProductIds = mostSoldToday.map(p => p._id);
-      console.log("Productos más vendidos hoy en Desayuno:", mostSoldToday, sortedProductIds);
-      // Traemos los productos
-      const allProducts = await Product.find({ _id: { $in: sortedProductIds } })
-        .lean();
-      console.log("Todos los productos encontrados:", allProducts);
-      const orderMap = {};
-      sortedProductIds.forEach((id, index) => {
-        orderMap[id.toString()] = index;
+      const allProducts = await Product.find({ category: "Desayuno" }).lean();
+
+      const soldMap = {};
+      mostSoldToday.forEach(p => {
+        soldMap[p._id.toString()] = p.totalSold;
       });
 
-      allProducts.sort((a, b) => orderMap[a._id.toString()] - orderMap[b._id.toString()]);
+      const enrichedProducts = allProducts
+        .map(p => ({
+          ...p,
+          totalSold: soldMap[p._id.toString()] || 0
+        }))
+        .sort((a, b) => b.totalSold - a.totalSold);
 
-      // Ordenamos según el ranking de ventas
-
-      // Paginación manual
-      products = allProducts.slice(skip, skip + parsedLimit);
-      totalProducts = allProducts.length;
-
+      totalProducts = enrichedProducts.length;
+      products = enrichedProducts.slice(skip, skip + parsedLimit);
     } else {
       // Caso normal para otras categorías
       let sort = {};
