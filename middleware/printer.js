@@ -17,7 +17,7 @@ const LINE_HEIGHT_RATIO = 1.15; // Factor de espacio entre líneas
 const FONT_SIZE_REGULAR = 9;
 const FONT_SIZE_LARGE = 10;
 const PAGE_WIDTH = 210; // Ancho útil después de márgenes
-const MARGIN = 5;
+const MARGIN = 2;
 const IMAGE_HEIGHT = 50; // Altura estimada del logo
 
 function restar3HorasYFormatear(fechaISO) {
@@ -46,7 +46,7 @@ function calcularAlturaNecesaria(sale) {
     const ALTURA_LINEA_REGULAR = 10.35; // 9 * 1.15
     const ALTURA_LINEA_LARGE = 11.5;    // 10 * 1.15
 
-    let alturaTotal = 240; // Ajusta este valor según pruebas
+    let alturaTotal = 230; // Ajusta este valor según pruebas
 
     // Agregar altura de productos
     alturaTotal += ALTURA_LINEA_REGULAR * sale.products.length;
@@ -68,14 +68,14 @@ function generarPDFTicket(sale) {
     return new Promise((resolve, reject) => {
         const alturaCalculada = calcularAlturaNecesaria(sale);
         const doc = new PDFDocument({
-            size: [220, alturaCalculada],
+            size: [226, alturaCalculada],
             margin: MARGIN
         });
 
         const stream = fs.createWriteStream(TICKET_PATH);
         doc.pipe(stream);
 
-        const pageWidth = 210; // 220 - 2*5 de margen
+        const pageWidth = 226;
         const imageWidth = 50;
         const x = (pageWidth - imageWidth) / 2;
 
