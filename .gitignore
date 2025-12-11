@@ -3,3 +3,5 @@ Dockerfile
 createAdmin.js
 ticket.pdf
 kitchen_ticket.pdf
+migrateCustomers.js
+.gitignore

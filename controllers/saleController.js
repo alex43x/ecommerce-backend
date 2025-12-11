@@ -3,7 +3,11 @@ import { body, param, validationResult } from 'express-validator';
 import { imprimirVenta } from '../middleware/printer.js';
 import { imprimirOrdenCocina } from '../middleware/order.js';
 import logger from '../config/logger.js';
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 import mongoose from 'mongoose';
+import ExcelJS from 'exceljs';
 
 // Validaciones comunes para datos de venta
 const saleDataValidations = [
@@ -418,3 +422,164 @@ export const deleteSale = [
     }
   }
 ];
+
+export const exportSalesToExcel = async (req, res, next) => {
+  try {
+    const {
+      user,
+      status,
+      startDate,
+      endDate,
+      paymentMethod,
+      dailyId,
+      ruc,
+      product,
+    } = req.query;
+
+    const query = {};
+
+    if (user) query.user = user;
+    if (status && status !== "all") query.status = status;
+    if (dailyId) query.dailyId = dailyId;
+    if (paymentMethod) {
+      query.payment = { $elemMatch: { paymentMethod } };
+    }
+    if (ruc) query.ruc = { $regex: ruc, $options: "i" };
+    if (product) {
+      query["products.name"] = { $regex: product, $options: "i" };
+    }
+
+    if (startDate && endDate) {
+      const localToUTC = (date, isStart) => {
+        const d = new Date(date);
+        return isStart
+          ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 3, 0, 0, 0))
+          : new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 2, 59, 59, 999));
+      };
+
+      query.date = {
+        $gte: localToUTC(startDate, true),
+        $lte: localToUTC(endDate, false)
+      };
+    }
+
+    // Obtener todas las ventas
+    const sales = await Sale.find(query)
+      .sort({ date: -1 })
+      .populate("user", "name")
+      .lean();
+
+    logger.info(`Exportando ${sales.length} ventas a Excel`);
+
+    // Crear workbook
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Ventas');
+
+    worksheet.columns = [
+      { header: 'Orden #', key: 'dailyId', width: 10 },
+      { header: 'Fecha', key: 'date', width: 20 },
+      { header: 'Cliente', key: 'customerName', width: 30 },
+      { header: 'RUC', key: 'ruc', width: 15 },
+      { header: 'Productos', key: 'products', width: 50 },
+      { header: 'Total', key: 'totalAmount', width: 15 },
+      { header: 'IVA', key: 'iva', width: 15 },
+      { header: 'Métodos de Pago', key: 'paymentMethod', width: 30 },
+      { header: 'Estado', key: 'status', width: 15 },
+      { header: 'Etapa', key: 'stage', width: 15 },
+      { header: 'Modo', key: 'mode', width: 15 },
+      { header: 'Vendedor', key: 'user', width: 20 }
+    ];
+
+    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    worksheet.getRow(1).alignment = { horizontal: 'center' };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF4472C4' }
+    };
+
+    const labels = {
+      status: {
+        completed: 'Completado',
+        pending: 'Pendiente',
+        canceled: 'Cancelado',
+        annulled: 'Anulado',
+        ordered: 'Pedido'
+      },
+      stage: {
+        delivered: 'Entregado',
+        finished: 'Terminado',
+        processed: 'En proceso',
+        closed: 'Cerrado'
+      },
+      mode: {
+        local: 'Local',
+        carry: 'Para llevar',
+        delivery: 'Delivery'
+      },
+      payment: {
+        cash: 'Efectivo',
+        card: 'Tarjeta',
+        qr: 'QR',
+        transfer: 'Transferencia'
+      }
+    };
+
+    sales.forEach(sale => {
+      worksheet.addRow({
+        dailyId: sale.dailyId || 'N/A',
+        date: new Date(sale.date).toLocaleString('es-PY'),
+        customerName: sale.customerName || 'N/A',
+        ruc: sale.ruc || 'N/A',
+        products: sale.products.map(
+          p => `${p.name} x${p.quantity} (₲${p.totalPrice.toLocaleString('es-PY')})`
+        ).join('\n'),
+        totalAmount: sale.totalAmount || 0,
+        iva: sale.iva || 0,
+        paymentMethod: sale.payment.map(
+          p => `${labels.payment[p.paymentMethod]}: ₲${p.totalAmount.toLocaleString('es-PY')}`
+        ).join('\n'),
+        status: labels.status[sale.status] || sale.status,
+        stage: labels.stage[sale.stage] || sale.stage,
+        mode: labels.mode[sale.mode] || sale.mode,
+        user: sale.user?.name || 'N/A'
+      });
+    });
+
+    worksheet.getColumn('totalAmount').numFmt = '₲#,##0';
+    worksheet.getColumn('iva').numFmt = '₲#,##0';
+
+    worksheet.eachRow((row, i) => {
+      if (i > 1) {
+        row.height = 50;
+        row.alignment = { wrapText: true, vertical: 'top' };
+      }
+    });
+
+    // 📌 Guardar en Desktop
+    const desktopPath = path.join(os.homedir(), 'Desktop');
+    const filename = `ventas_${Date.now()}.xlsx`;
+    const filePath = path.join(desktopPath, filename);
+
+    await workbook.xlsx.writeFile(filePath);
+
+    logger.info(`Archivo Excel generado en Desktop: ${filePath}`);
+
+    // 📥 Descargar al cliente
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`
+    );
+
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+
+  } catch (error) {
+    logger.error('Error al exportar ventas a Excel', error);
+    next(error);
+  }
+};
