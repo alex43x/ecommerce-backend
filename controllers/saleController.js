@@ -3,9 +3,7 @@ import { body, param, validationResult } from 'express-validator';
 import { imprimirVenta } from '../middleware/printer.js';
 import { imprimirOrdenCocina } from '../middleware/order.js';
 import logger from '../config/logger.js';
-import os from 'os';
-import path from 'path';
-import fs from 'fs';
+
 import mongoose from 'mongoose';
 import ExcelJS from 'exceljs';
 
@@ -423,6 +421,7 @@ export const deleteSale = [
   }
 ];
 
+
 export const exportSalesToExcel = async (req, res, next) => {
   try {
     const {
@@ -452,29 +451,41 @@ export const exportSalesToExcel = async (req, res, next) => {
     if (startDate && endDate) {
       const localToUTC = (date, isStart) => {
         const d = new Date(date);
-        return isStart
-          ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 3, 0, 0, 0))
-          : new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 2, 59, 59, 999));
+        if (isStart) {
+          return new Date(Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate(),
+            3, 0, 0, 0
+          ));
+        } else {
+          return new Date(Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate() + 1,
+            2, 59, 59, 999
+          ));
+        }
       };
 
-      query.date = {
-        $gte: localToUTC(startDate, true),
-        $lte: localToUTC(endDate, false)
-      };
+      const utcStart = localToUTC(startDate, true);
+      const utcEnd = localToUTC(endDate, false);
+      query.date = { $gte: utcStart, $lte: utcEnd };
     }
 
-    // Obtener todas las ventas
+    // Obtener TODAS las ventas sin límite
     const sales = await Sale.find(query)
       .sort({ date: -1 })
       .populate("user", "name")
       .lean();
 
-    logger.info(`Exportando ${sales.length} ventas a Excel`);
+    console.log(`Exportando ${sales.length} ventas...`);
 
-    // Crear workbook
+    // Crear workbook y worksheet
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Ventas');
 
+    // Definir columnas
     worksheet.columns = [
       { header: 'Orden #', key: 'dailyId', width: 10 },
       { header: 'Fecha', key: 'date', width: 20 },
@@ -490,82 +501,97 @@ export const exportSalesToExcel = async (req, res, next) => {
       { header: 'Vendedor', key: 'user', width: 20 }
     ];
 
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    worksheet.getRow(1).alignment = { horizontal: 'center' };
+    // Estilo del header
+    worksheet.getRow(1).font = { bold: true, size: 12 };
     worksheet.getRow(1).fill = {
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FF4472C4' }
     };
+    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
 
-    const labels = {
-      status: {
-        completed: 'Completado',
-        pending: 'Pendiente',
-        canceled: 'Cancelado',
-        annulled: 'Anulado',
-        ordered: 'Pedido'
-      },
-      stage: {
-        delivered: 'Entregado',
-        finished: 'Terminado',
-        processed: 'En proceso',
-        closed: 'Cerrado'
-      },
-      mode: {
-        local: 'Local',
-        carry: 'Para llevar',
-        delivery: 'Delivery'
-      },
-      payment: {
-        cash: 'Efectivo',
-        card: 'Tarjeta',
-        qr: 'QR',
-        transfer: 'Transferencia'
-      }
+    // Mapeos de traducción
+    const statusLabels = {
+      'completed': 'Completado',
+      'pending': 'Pendiente',
+      'canceled': 'Cancelado',
+      'annulled': 'Anulado',
+      'ordered': 'Pedido'
     };
 
+    const stageLabels = {
+      'delivered': 'Entregado',
+      'finished': 'Terminado',
+      'processed': 'En proceso',
+      'closed': 'Cerrado'
+    };
+
+    const modeLabels = {
+      'local': 'Local',
+      'carry': 'Para llevar',
+      'delivery': 'Delivery'
+    };
+
+    const paymentLabels = {
+      'cash': 'Efectivo',
+      'card': 'Tarjeta',
+      'qr': 'QR',
+      'transfer': 'Transferencia'
+    };
+
+    // Agregar datos
     sales.forEach(sale => {
+      // Formatear productos
+      const productsText = sale.products
+        .map(p => `${p.name} x${p.quantity} (₲${p.totalPrice.toLocaleString('es-PY')})`)
+        .join('\n');
+
+      // Formatear métodos de pago
+      const paymentMethods = sale.payment
+        .map(p => `${paymentLabels[p.paymentMethod]}: ₲${p.totalAmount.toLocaleString('es-PY')}`)
+        .join('\n');
+
+      // Formatear fecha
+      const formattedDate = new Date(sale.date).toLocaleString('es-PY', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
       worksheet.addRow({
         dailyId: sale.dailyId || 'N/A',
-        date: new Date(sale.date).toLocaleString('es-PY'),
+        date: formattedDate,
         customerName: sale.customerName || 'N/A',
         ruc: sale.ruc || 'N/A',
-        products: sale.products.map(
-          p => `${p.name} x${p.quantity} (₲${p.totalPrice.toLocaleString('es-PY')})`
-        ).join('\n'),
+        products: productsText,
         totalAmount: sale.totalAmount || 0,
         iva: sale.iva || 0,
-        paymentMethod: sale.payment.map(
-          p => `${labels.payment[p.paymentMethod]}: ₲${p.totalAmount.toLocaleString('es-PY')}`
-        ).join('\n'),
-        status: labels.status[sale.status] || sale.status,
-        stage: labels.stage[sale.stage] || sale.stage,
-        mode: labels.mode[sale.mode] || sale.mode,
+        paymentMethod: paymentMethods,
+        status: statusLabels[sale.status] || sale.status,
+        stage: stageLabels[sale.stage] || sale.stage,
+        mode: modeLabels[sale.mode] || sale.mode,
         user: sale.user?.name || 'N/A'
       });
     });
 
+    // Formatear columnas de montos como números
     worksheet.getColumn('totalAmount').numFmt = '₲#,##0';
     worksheet.getColumn('iva').numFmt = '₲#,##0';
 
-    worksheet.eachRow((row, i) => {
-      if (i > 1) {
+    // Ajustar altura de filas para texto multilínea
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
         row.height = 50;
-        row.alignment = { wrapText: true, vertical: 'top' };
+        row.alignment = { vertical: 'top', wrapText: true };
       }
     });
 
-    // 📌 Guardar en Desktop
-    const desktopPath = path.join(os.homedir(), 'Desktop');
-    const filename = `ventas_${Date.now()}.xlsx`;
-    const filePath = path.join(desktopPath, filename);
-
-    await workbook.xlsx.writeFile(filePath);
-
-    logger.info(`Archivo Excel generado en Desktop: ${filePath}`);
-
-    // 📥 Descargar al cliente
+    // Configurar respuesta HTTP
+    const filename = `ventas_${startDate || 'todas'}_${endDate || 'todas'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -575,11 +601,14 @@ export const exportSalesToExcel = async (req, res, next) => {
       `attachment; filename="${filename}"`
     );
 
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
-
+    // Escribir el archivo al response
+    await workbook.xlsx.write(res);
+    
+    console.log(`Exportadas ${sales.length} ventas exitosamente`);
+    
+    res.end();
   } catch (error) {
-    logger.error('Error al exportar ventas a Excel', error);
+    console.error('Error al exportar ventas:', error);
     next(error);
   }
 };
