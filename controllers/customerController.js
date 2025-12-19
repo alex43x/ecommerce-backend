@@ -122,31 +122,34 @@ export const getCustomers = async (req, res, next) => {
   }
 };
 
-// Obtener un cliente por ID
+// Obtener un cliente por RUC 
 export const getCustomerById = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    logger.info(`Obteniendo cliente por ID: ${id}`);
+    const { id: ruc } = req.params;
+    logger.info(`Buscando cliente por RUC: ${ruc}`);
 
-    const customer = await Customer.findById(id);
+    const customer = await Customer.findOne({ ruc });
+
     if (!customer) {
       const error = new Error('Cliente no encontrado');
       error.name = 'NotFoundError';
-      logger.warn(`Cliente no encontrado: ${id}`);
+      logger.warn(`Cliente con RUC ${ruc} no encontrado`);
       throw error;
     }
 
     logger.info(`Cliente encontrado: ${customer.ruc} - ${customer.name}`);
     res.status(200).json(customer);
+
   } catch (error) {
-    logger.error(`Error al obtener cliente por ID: ${error.message}`, { 
+    logger.error(`Error al obtener cliente por RUC: ${error.message}`, { 
       error: error.name,
       stack: error.stack,
-      id: req.params.id 
+      ruc: req.params.id 
     });
     next(error);
   }
 };
+
 
 // Actualizar un cliente
 export const updateCustomer = async (req, res, next) => {
