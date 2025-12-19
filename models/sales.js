@@ -1,64 +1,119 @@
 import mongoose from 'mongoose';
 import Counter from "./counter.js";
+import Timbrado from './timbrado.js';
 
 const saleSchema = new mongoose.Schema({
   dailyId: { type: Number },
+
+  // DATOS DE FACTURA
+  invoiceNumber: { type: String }, // Número de factura (se genera al facturar)
+  invoiceType: { type: String, enum: ['contado', 'credito'], required: true },
+  creditTerm: { type: Number }, // solo crédito
+  documentType: { type: String, enum: ['electronic', 'printed'], required: true },
+
+  // Datos del timbrado activo al facturar
+  timbradoNumber: { type: String },   // código del timbrado
+  timbradoExpiration: { type: Date }, // fecha de expiración
+  timbrado: { type: mongoose.Schema.Types.ObjectId, ref: 'Timbrado' },
+
+  invoiced: { type: Boolean, default: false }, // si la venta fue facturada
+
+  // PRODUCTOS
   products: [{
-    productId: { // ← ID del PRODUCTO (no de la variante)
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product',
-      required: true
-    },
-    variantId: { // ← ID de la variante 
-      type: String
-    },
-    quantity: { type: Number, required: true },//Cantidad del producto
-    name: { type: String, required: true },//Nombre del producto
-    iva: { type: Number, required: true },//IVA individual, 
-    totalPrice: { type: Number, required: true }//Monto total del producto
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+    variantId: { type: String },
+    quantity: { type: Number, required: true },
+    name: { type: String, required: true },
+    ivaRate: { type: Number, enum: [0,5,10], required: true },
+    ivaAmount: { type: Number, required: true },
+    totalPrice: { type: Number, required: true } // IVA incluido
   }],
-  totalAmount: { type: Number, required: true }, //Monto total de la venta
+
+  totals: {
+    gravada10: { type: Number, default: 0 },
+    gravada5: { type: Number, default: 0 },
+    exenta: { type: Number, default: 0 },
+    iva10: { type: Number, default: 0 },
+    iva5: { type: Number, default: 0 }
+  },
+
+  totalAmount: { type: Number, required: true },
   ruc: { type: String, required: true },
   customerName: { type: String, required: true },
-  payment: [{//Array de Pagos
-    paymentMethod: { type: String, required: true, enum: ['cash', 'card', 'qr', 'transfer'] },//Método de Pago
-    totalAmount: { type: Number, required: true }, //Cantidad pagada con el método de pago
-    date: { type: Date, default: Date.now }//Fecha de cada pago
+
+  payment: [{
+    paymentMethod: { type: String, enum: ['cash','card','qr','transfer'], required: true },
+    totalAmount: { type: Number, required: true },
+    date: { type: Date, default: Date.now }
   }],
-  iva: { type: Number, required: true },//IVA generado por la venta
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Vendedor que realizó la venta
-  status: { type: String, enum: ['completed', 'pending', 'canceled', 'annulled', 'ordered'], required: true },
-  /*Estados de venta
-  Completed: Orden Terminada sin errores
-  Pending: Orden Pendiente (Sin Pagar)
-  Ordered: Orden Pedido (Pago Parcial)
-  Canceled: Orden Cancelada (si se cancela antes de la confirmación)
-  Annulled: Orden Anulado (igual que cancelled pero después de la confirmación)*/
-  stage: { type: String, enum: ['delivered', 'finished', 'processed', 'closed'], required: true },
-  /*Etapas de Orden 
-  Delivered: Entregado,
-  Finished: Terminado, listo para entregar
-  Processed: En proceso, aún no se puede entregar
-  Closed: Terminado, por anulación o cancelación*/
-  mode: { type: String, enum: ['local', 'carry', 'delivery'], required: true },//Modo de venta (En local, para llevar o delivery)
-  date: { type: Date, default: Date.now }//Fecha en la que se realizó la orden
+
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+
+  status: { type: String, enum: ['completed','pending','canceled','annulled','ordered'], required: true },
+  stage: { type: String, enum: ['delivered','finished','processed','closed'], required: true },
+
+  mode: { type: String, enum: ['local','carry','delivery'], required: true },
+
+  date: { type: Date, default: Date.now }
 });
 
-saleSchema.pre("save", async function (next) {
+// Hook para dailyId y totales
+saleSchema.pre("save", async function(next) {
   if (!this.isNew) return next();
 
-  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
+  const today = new Date().toISOString().split("T")[0];
   const counter = await Counter.findOneAndUpdate(
     { date: today },
     { $inc: { seq: 1 } },
     { new: true, upsert: true }
   );
-
   this.dailyId = counter.seq;
+
+  // Totales fiscales
+  this.totals.gravada10 = 0;
+  this.totals.gravada5 = 0;
+  this.totals.exenta = 0;
+  this.totals.iva10 = 0;
+  this.totals.iva5 = 0;
+
+  this.products.forEach(p => {
+    if (p.ivaRate === 10) {
+      this.totals.gravada10 += p.totalPrice - p.ivaAmount;
+      this.totals.iva10 += p.ivaAmount;
+    } else if (p.ivaRate === 5) {
+      this.totals.gravada5 += p.totalPrice - p.ivaAmount;
+      this.totals.iva5 += p.ivaAmount;
+    } else {
+      this.totals.exenta += p.totalPrice;
+    }
+  });
+
   next();
 });
 
-const Sale = mongoose.model('Sale', saleSchema);
+// Método para facturar usando el timbrado activo
+saleSchema.methods.facturar = async function() {
+  if (this.invoiced) throw new Error("Venta ya facturada");
 
+  const now = new Date();
+  const timbrado = await Timbrado.findOne({
+    issuedAt: { $lte: now },
+    expiresAt: { $gte: now }
+  }).sort({ issuedAt: 1 });
+
+  if (!timbrado) throw new Error("No hay timbrado activo");
+
+  const factura = await timbrado.generateInvoice(this._id);
+
+  this.invoiceNumber = factura.invoiceNumber;
+  this.timbradoNumber = timbrado.code;
+  this.timbradoExpiration = timbrado.expiresAt;
+  this.timbrado = timbrado._id;
+  this.invoiced = true;
+
+  await this.save();
+  return factura;
+};
+
+const Sale = mongoose.model('Sale', saleSchema);
 export default Sale;
