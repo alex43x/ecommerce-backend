@@ -1,4 +1,4 @@
-import { Product } from "../models/product.js";
+import { Product } from "../models/product.js"; 
 import Sale from "../models/sales.js";
 import { body, param, validationResult } from 'express-validator';
 import logger from '../config/logger.js';
@@ -10,38 +10,29 @@ const productDataValidations = [
     .trim()
     .notEmpty().withMessage('El nombre es requerido')
     .isLength({ max: 100 }).withMessage('Máximo 100 caracteres'),
-
   body('description')
     .optional()
     .isLength({ max: 500 }).withMessage('Máximo 500 caracteres'),
-
   body('category')
     .notEmpty().withMessage('La categoría es requerida')
     .isLength({ max: 50 }).withMessage('Máximo 50 caracteres'),
-
   body('price')
     .isFloat({ min: 0 }).withMessage('El precio debe ser un número positivo'),
-
   body('cost')
     .optional()
     .isFloat({ min: 0 }).withMessage('El costo debe ser un número positivo'),
-
   body('stock')
     .optional()
     .isInt({ min: 0 }).withMessage('El stock debe ser un entero positivo'),
-
   body('variants.*.name')
     .optional()
     .isLength({ max: 50 }).withMessage('Máximo 50 caracteres para el nombre de variante'),
-
   body('variants.*.barcode')
     .optional()
     .isLength({ max: 50 }).withMessage('Máximo 50 caracteres para el código de barras'),
-
   body('variants.*.price')
     .optional()
     .isFloat({ min: 0 }).withMessage('El precio de variante debe ser un número positivo'),
-
   body('active')
     .optional()
     .isBoolean().withMessage('El estado activo debe ser un valor booleano')
@@ -88,6 +79,7 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
+// ================== CRUD PRODUCTOS ==================
 export const createProduct = [
   ...productDataValidations,
   validateRequest,
@@ -121,63 +113,18 @@ export const createProduct = [
   }
 ];
 
-/* ORDEN FIJO PARA DESAYUNO */
-const DESAYUNO_ORDER = [
-  "Chipa",
-  "Huevo revuelto",
-  "Agregados",
-  "Jugos",
-  "Café con leche",
-  "Café negro",
-  "Mixto",
-  "Mixto solo queso",
-  "Mbejú",
-  "Cocido con leche",
-  "Cocido negro",
-  "Huevo",
-  "Tostadas",
-  "Mixto árabe",
-  "Sandwich de J y Q",
-  "Sandwich de verduras",
-  "Sandwich de milanesa",
-  "Bizcochuelo Naranja",
-  "Pastafrola",
-  "Brownie",
-  "Pireca",
-  "Café cortado",
-  "Cocido con leche",
-  "Chocolate",
-  "Vaso térmico",
-  "Azúcar sobre",
-  "Omelette",
-  "Tortilla",
-  "Empanadas fritas",
-  "Empanadas al horno",
-  "Villaroel",
-  "Coxinha",
-  "Croqueta",
-  "Tarta",
-  "Canastitas",
-  "Chipa guazú",
-  "Sopa paraguaya",
-  "Mandioca",
-  "Pan"
-];
-
+// ================== GET PRODUCTOS ==================
 export const getProducts = async (req, res, next) => {
   const { page = 1, limit = 10, category, search, sortBy } = req.query;
 
   try {
     const query = {};
-
-    /* FILTRO POR CATEGORÍA */
     if (category === "noBebidas") {
       query.category = { $ne: "Bebidas" };
     } else if (category) {
       query.category = category;
     }
 
-    /* BUSQUEDA */
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
@@ -192,71 +139,41 @@ export const getProducts = async (req, res, next) => {
     let products = [];
     let totalProducts = 0;
 
-    /* =====================================
-       CASO ESPECIAL: DESAYUNO (SIN SEARCH)
-       ===================================== */
+    const DESAYUNO_ORDER = [
+      "Chipa","Huevo revuelto","Agregados","Jugos","Café con leche","Café negro",
+      "Mixto","Mixto solo queso","Mbejú","Cocido con leche","Cocido negro",
+      "Huevo","Tostadas","Mixto árabe","Sandwich de J y Q","Sandwich de verduras",
+      "Sandwich de milanesa","Bizcochuelo Naranja","Pastafrola","Brownie",
+      "Pireca","Café cortado","Cocido con leche","Chocolate","Vaso térmico",
+      "Azúcar sobre","Omelette","Tortilla","Empanadas fritas","Empanadas al horno",
+      "Villaroel","Coxinha","Croqueta","Tarta","Canastitas","Chipa guazú",
+      "Sopa paraguaya","Mandioca","Pan"
+    ];
+
     if (category === "Desayuno" && !search) {
-
-      const allProducts = await Product
-        .find({ category: "Desayuno" })
-        .lean();
-
-      /* MAPA DE ORDEN */
+      const allProducts = await Product.find({ category: "Desayuno" }).lean();
       const orderMap = {};
-      DESAYUNO_ORDER.forEach((name, index) => {
-        orderMap[name.toLowerCase()] = index;
-      });
-
-      /* ORDENAR:
-         - los que están en la lista → arriba
-         - los que NO están → al fondo
-      */
+      DESAYUNO_ORDER.forEach((name, index) => orderMap[name.toLowerCase()] = index);
       const orderedProducts = allProducts.sort((a, b) => {
         const aIndex = orderMap[a.name.toLowerCase()];
         const bIndex = orderMap[b.name.toLowerCase()];
-
-        // Ambos fuera de la lista
         if (aIndex === undefined && bIndex === undefined) return 0;
-
-        // Solo A fuera → A al fondo
         if (aIndex === undefined) return 1;
-
-        // Solo B fuera → B al fondo
         if (bIndex === undefined) return -1;
-
-        // Ambos dentro → orden del feed
         return aIndex - bIndex;
       });
-
       totalProducts = orderedProducts.length;
       products = orderedProducts.slice(skip, skip + parsedLimit);
-
     } else {
-      /* =====================================
-         CASO NORMAL (INCLUYE DESAYUNO CON SEARCH)
-         ===================================== */
-
       let sort = {};
       const sortOptions = {
-        priceAsc: { price: 1 },
-        priceDesc: { price: -1 },
-        nameAsc: { name: 1 },
-        nameDesc: { name: -1 },
-        dateAsc: { createdAt: 1 },
-        dateDesc: { createdAt: -1 }
+        priceAsc: { price: 1 }, priceDesc: { price: -1 },
+        nameAsc: { name: 1 }, nameDesc: { name: -1 },
+        dateAsc: { createdAt: 1 }, dateDesc: { createdAt: -1 }
       };
-
-      if (sortBy && sortOptions[sortBy]) {
-        sort = sortOptions[sortBy];
-      }
-
+      if (sortBy && sortOptions[sortBy]) sort = sortOptions[sortBy];
       [products, totalProducts] = await Promise.all([
-        Product.find(query)
-          .skip(skip)
-          .limit(parsedLimit)
-          .collation({ locale: "en", strength: 1 })
-          .sort(sort)
-          .lean(),
+        Product.find(query).skip(skip).limit(parsedLimit).collation({ locale: "en", strength: 1 }).sort(sort).lean(),
         Product.countDocuments(query)
       ]);
     }
@@ -271,11 +188,8 @@ export const getProducts = async (req, res, next) => {
       data: products
     });
 
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
-
 
 export const getProductbyID = [
   ...idValidation,
@@ -283,23 +197,13 @@ export const getProductbyID = [
   async (req, res, next) => {
     try {
       const product = await Product.findById(req.params.id).lean();
-
       if (!product) {
         logger.warn(`Producto no encontrado: ${req.params.id}`);
-        const error = new Error('Producto no encontrado');
-        error.statusCode = 404;
-        throw error;
+        const error = new Error('Producto no encontrado'); error.statusCode = 404; throw error;
       }
-
-      res.status(200).json({
-        success: true,
-        data: product
-      });
-
+      res.status(200).json({ success: true, data: product });
     } catch (error) {
-      logger.error(`Error al obtener producto por ID: ${error.message}`, {
-        productId: req.params.id
-      });
+      logger.error(`Error al obtener producto por ID: ${error.message}`, { productId: req.params.id });
       next(error);
     }
   }
@@ -311,37 +215,13 @@ export const updateProduct = [
   validateRequest,
   async (req, res, next) => {
     try {
-      const updatedProduct = await Product.findByIdAndUpdate(
-        req.params.id,
-        req.body,
-        { new: true, runValidators: true }
-      ).lean();
-
-      if (!updatedProduct) {
-        logger.warn(`Producto no encontrado para actualización: ${req.params.id}`);
-        const error = new Error('Producto no encontrado');
-        error.statusCode = 404;
-        throw error;
-      }
-
+      const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).lean();
+      if (!updatedProduct) { logger.warn(`Producto no encontrado: ${req.params.id}`); const error = new Error('Producto no encontrado'); error.statusCode = 404; throw error; }
       logger.info(`Producto actualizado: ${updatedProduct._id}`);
-
-      res.status(200).json({
-        success: true,
-        message: 'Producto actualizado exitosamente',
-        data: updatedProduct
-      });
-
+      res.status(200).json({ success: true, message: 'Producto actualizado exitosamente', data: updatedProduct });
     } catch (error) {
-      if (error.code === 11000) {
-        logger.warn(`Intento de actualizar a nombre de producto duplicado: ${req.body.name}`);
-        error.statusCode = 409;
-        error.clientMessage = 'El nombre de producto ya existe';
-        error.clientDetails = { field: 'name' };
-      }
-      logger.error(`Error al actualizar producto: ${error.message}`, {
-        productId: req.params.id
-      });
+      if (error.code === 11000) { logger.warn(`Nombre duplicado: ${req.body.name}`); error.statusCode = 409; error.clientMessage = 'El nombre de producto ya existe'; error.clientDetails = { field: 'name' }; }
+      logger.error(`Error al actualizar producto: ${error.message}`, { productId: req.params.id });
       next(error);
     }
   }
@@ -353,28 +233,10 @@ export const deleteProduct = [
   async (req, res, next) => {
     try {
       const product = await Product.findByIdAndDelete(req.params.id).lean();
-
-      if (!product) {
-        logger.warn(`Producto no encontrado para eliminación: ${req.params.id}`);
-        const error = new Error('Producto no encontrado');
-        error.statusCode = 404;
-        throw error;
-      }
-
+      if (!product) { logger.warn(`Producto no encontrado: ${req.params.id}`); const error = new Error('Producto no encontrado'); error.statusCode = 404; throw error; }
       logger.info(`Producto eliminado: ${product._id}`);
-
-      res.status(200).json({
-        success: true,
-        message: 'Producto eliminado exitosamente',
-        data: { id: product._id }
-      });
-
-    } catch (error) {
-      logger.error(`Error al eliminar producto: ${error.message}`, {
-        productId: req.params.id
-      });
-      next(error);
-    }
+      res.status(200).json({ success: true, message: 'Producto eliminado exitosamente', data: { id: product._id } });
+    } catch (error) { logger.error(`Error al eliminar producto: ${error.message}`, { productId: req.params.id }); next(error); }
   }
 ];
 
@@ -386,16 +248,8 @@ export const getTopSellingProducts = async (req, res, next) => {
       { $sort: { salesCount: -1 } },
       { $limit: 10 }
     ]);
-
-    res.status(200).json({
-      success: true,
-      data: products
-    });
-
-  } catch (error) {
-    logger.error(`Error al obtener productos más vendidos: ${error.message}`);
-    next(error);
-  }
+    res.status(200).json({ success: true, data: products });
+  } catch (error) { logger.error(`Error al obtener productos más vendidos: ${error.message}`); next(error); }
 };
 
 export const getProductByBarcode = [
@@ -404,37 +258,16 @@ export const getProductByBarcode = [
   async (req, res, next) => {
     try {
       const { barcode } = req.params;
-
       const result = await Product.aggregate([
         { $match: { "variants.barcode": barcode } },
         { $unwind: "$variants" },
         { $match: { "variants.barcode": barcode } },
-        {
-          $project: {
-            name: 1,
-            category: 1,
-            variants: "$variants",
-          }
-        }
+        { $project: { name: 1, category: 1, variants: "$variants" } }
       ]);
-
-      if (!result.length) {
-        logger.warn(`Producto con código de barras no encontrado: ${barcode}`);
-        const error = new Error('Producto no encontrado');
-        error.statusCode = 404;
-        throw error;
-      }
-
-      res.status(200).json({
-        success: true,
-        data: result[0]
-      });
-
-    } catch (error) {
-      logger.error(`Error al buscar producto por código de barras: ${error.message}`, {
-        barcode: req.params.barcode
-      });
-      next(error);
-    }
+      if (!result.length) { logger.warn(`Código de barras no encontrado: ${barcode}`); const error = new Error('Producto no encontrado'); error.statusCode = 404; throw error; }
+      res.status(200).json({ success: true, data: result[0] });
+    } catch (error) { logger.error(`Error al buscar producto por código de barras: ${error.message}`, { barcode: req.params.barcode }); next(error); }
   }
 ];
+
+
