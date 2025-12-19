@@ -14,6 +14,7 @@ import userRoutes from './routes/users.js';
 import saleRoutes from './routes/sales.js';
 import reportsRoutes from "./routes/reports.js";
 import categoryRoutes from './routes/categories.js';
+import timbradoRoutes from './routes/timbrados.js'
 import errorHandler from './middleware/errorMiddleware.js';
 
 const limiter = rateLimit({
@@ -61,6 +62,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/sales', saleRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/customers", customerRoutes);
+app.use("/api/timbrados", timbradoRoutes);
 
 app.use(errorHandler);
 
