@@ -121,85 +121,134 @@ export const createProduct = [
   }
 ];
 
+/* ORDEN FIJO PARA DESAYUNO */
+const DESAYUNO_ORDER = [
+  "Chipa",
+  "Huevo revuelto",
+  "Agregados",
+  "Jugos",
+  "Café con leche",
+  "Café negro",
+  "Mixto",
+  "Mixto solo queso",
+  "Mbejú",
+  "Cocido con leche",
+  "Cocido negro",
+  "Huevo",
+  "Tostadas",
+  "Mixto árabe",
+  "Sandwich de J y Q",
+  "Sandwich de verduras",
+  "Sandwich de milanesa",
+  "Bizcochuelo Naranja",
+  "Pastafrola",
+  "Brownie",
+  "Pireca",
+  "Café cortado",
+  "Cocido con leche",
+  "Chocolate",
+  "Vaso térmico",
+  "Azúcar sobre",
+  "Omelette",
+  "Tortilla",
+  "Empanadas fritas",
+  "Empanadas al horno",
+  "Villaroel",
+  "Coxinha",
+  "Croqueta",
+  "Tarta",
+  "Canastitas",
+  "Chipa guazú",
+  "Sopa paraguaya",
+  "Mandioca",
+  "Pan"
+];
+
 export const getProducts = async (req, res, next) => {
   const { page = 1, limit = 10, category, search, sortBy } = req.query;
 
   try {
     const query = {};
 
-    if (category === 'noBebidas') {
-      query.category = { $ne: 'Bebidas' };
+    /* FILTRO POR CATEGORÍA */
+    if (category === "noBebidas") {
+      query.category = { $ne: "Bebidas" };
     } else if (category) {
       query.category = category;
     }
 
+    /* BUSQUEDA */
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { name: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } }
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const parsedPage = parseInt(page);
     const parsedLimit = parseInt(limit);
+    const skip = (parsedPage - 1) * parsedLimit;
 
     let products = [];
     let totalProducts = 0;
 
-    // Caso especial: categoría "desayuno" -> ordenar por más vendido hoy
-    if (category === 'Desayuno') {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+    /* =====================================
+       CASO ESPECIAL: DESAYUNO (SIN SEARCH)
+       ===================================== */
+    if (category === "Desayuno" && !search) {
 
-      const mostSoldToday = await Sale.aggregate([
-        { $match: { date: { $gte: today }, status: 'completed' } },
-        { $unwind: "$products" },
-        {
-          $lookup: {
-            from: "products",
-            localField: "products.productId",
-            foreignField: "_id",
-            as: "productInfo"
-          }
-        },
-        { $unwind: "$productInfo" },
-        { $match: { "productInfo.category": "Desayuno" } },
-        {
-          $group: {
-            _id: "$products.productId",
-            totalSold: { $sum: "$products.quantity" }
-          }
-        }
-      ]);
+      const allProducts = await Product
+        .find({ category: "Desayuno" })
+        .lean();
 
-      const allProducts = await Product.find({ category: "Desayuno" }).lean();
-
-      const soldMap = {};
-      mostSoldToday.forEach(p => {
-        soldMap[p._id.toString()] = p.totalSold;
+      /* MAPA DE ORDEN */
+      const orderMap = {};
+      DESAYUNO_ORDER.forEach((name, index) => {
+        orderMap[name.toLowerCase()] = index;
       });
 
-      const enrichedProducts = allProducts
-        .map(p => ({
-          ...p,
-          totalSold: soldMap[p._id.toString()] || 0
-        }))
-        .sort((a, b) => b.totalSold - a.totalSold);
+      /* ORDENAR:
+         - los que están en la lista → arriba
+         - los que NO están → al fondo
+      */
+      const orderedProducts = allProducts.sort((a, b) => {
+        const aIndex = orderMap[a.name.toLowerCase()];
+        const bIndex = orderMap[b.name.toLowerCase()];
 
-      totalProducts = enrichedProducts.length;
-      products = enrichedProducts.slice(skip, skip + parsedLimit);
+        // Ambos fuera de la lista
+        if (aIndex === undefined && bIndex === undefined) return 0;
+
+        // Solo A fuera → A al fondo
+        if (aIndex === undefined) return 1;
+
+        // Solo B fuera → B al fondo
+        if (bIndex === undefined) return -1;
+
+        // Ambos dentro → orden del feed
+        return aIndex - bIndex;
+      });
+
+      totalProducts = orderedProducts.length;
+      products = orderedProducts.slice(skip, skip + parsedLimit);
+
     } else {
-      // Caso normal para otras categorías
+      /* =====================================
+         CASO NORMAL (INCLUYE DESAYUNO CON SEARCH)
+         ===================================== */
+
       let sort = {};
       const sortOptions = {
-        'priceAsc': { price: 1 },
-        'priceDesc': { price: -1 },
-        'nameAsc': { name: 1 },
-        'nameDesc': { name: -1 },
-        'dateAsc': { createdAt: 1 },
-        'dateDesc': { createdAt: -1 }
+        priceAsc: { price: 1 },
+        priceDesc: { price: -1 },
+        nameAsc: { name: 1 },
+        nameDesc: { name: -1 },
+        dateAsc: { createdAt: 1 },
+        dateDesc: { createdAt: -1 }
       };
-      if (sortBy && sortOptions[sortBy]) sort = sortOptions[sortBy];
+
+      if (sortBy && sortOptions[sortBy]) {
+        sort = sortOptions[sortBy];
+      }
 
       [products, totalProducts] = await Promise.all([
         Product.find(query)
@@ -217,7 +266,7 @@ export const getProducts = async (req, res, next) => {
       count: products.length,
       totalItems: totalProducts,
       totalPages: Math.ceil(totalProducts / parsedLimit),
-      currentPage: parseInt(page),
+      currentPage: parsedPage,
       itemsPerPage: parsedLimit,
       data: products
     });
@@ -226,6 +275,7 @@ export const getProducts = async (req, res, next) => {
     next(error);
   }
 };
+
 
 export const getProductbyID = [
   ...idValidation,
