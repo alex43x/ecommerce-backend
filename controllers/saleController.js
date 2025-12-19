@@ -8,21 +8,25 @@ import mongoose from 'mongoose';
 import ExcelJS from 'exceljs';
 
 // Validaciones comunes para datos de venta
-const saleDataValidations = [
+export const saleDataValidations = [
   body('products')
     .isArray({ min: 1 }).withMessage('Debe incluir al menos un producto')
     .custom(products => {
       const isValid = products.every(p =>
-        p.productId && p.quantity && p.totalPrice && p.variantId
+        p.productId && p.quantity != null && p.totalPrice != null && p.ivaRate != null
       );
       if (!isValid) {
-        throw new Error('Cada producto debe tener productId, quantity, totalPrice y variantId');
+        throw new Error('Cada producto debe tener productId, quantity, totalPrice y ivaRate');
       }
       return true;
     }),
 
   body('products.*.totalPrice')
     .isFloat({ min: 0 }).withMessage('Precio total inválido'),
+  body('products.*.ivaRate')
+    .isIn([0, 5, 10]).withMessage('IVA debe ser 0, 5 o 10%'),
+  body('products.*.ivaAmount')
+    .isFloat({ min: 0 }).withMessage('IVA debe ser un número positivo'),
 
   body('payment')
     .optional()
@@ -35,11 +39,6 @@ const saleDataValidations = [
       }
       return true;
     }).withMessage('El total de pagos excede el monto de la venta'),
-
-
-  body('iva')
-    .optional()
-    .isFloat({ min: 0 }).withMessage('IVA debe ser un número positivo'),
 
   body('ruc')
     .optional()
@@ -58,39 +57,36 @@ const saleDataValidations = [
   body('mode')
     .optional()
     .isIn(['local', 'carry', 'delivery'])
-    .withMessage('Modo inválido')
+    .withMessage('Modo inválido'),
+
+  // Validaciones condicionales
+  body('creditTerm')
+    .if(body('invoiceType').equals('credito'))
+    .notEmpty().withMessage('Plazo de crédito es requerido'),
+
+  body('timbradoNumber')
+    .if(body('documentType').equals('printed'))
+    .notEmpty().withMessage('Timbrado es requerido para documento impreso'),
+
+  body('timbradoExpiration')
+    .if(body('documentType').equals('printed'))
+    .isDate().withMessage('Fecha de expiración de timbrado inválida')
 ];
 
-// Validación de ID en parámetros
-const idValidation = [
+export const idValidation = [
   param('id')
     .notEmpty().withMessage('El ID es requerido')
     .custom((value) => mongoose.Types.ObjectId.isValid(value))
     .withMessage('ID no válido')
 ];
 
-// Middleware para validar resultados
-const validateRequest = (req, res, next) => {
+export const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
-  console.log(errors)
   if (!errors.isEmpty()) {
-    const formattedErrors = errors.array().map(error => ({
-      field: error.param,
-      message: error.msg,
-      location: error.location,
-      value: error.value
-    }));
-
-    logger.warn('Errores de validación', {
-      path: req.path,
-      method: req.method,
-      errors: formattedErrors
-    });
-
     return res.status(400).json({
       success: false,
       message: 'Errores de validación',
-      errors: formattedErrors
+      errors: errors.array()
     });
   }
   next();
@@ -101,21 +97,41 @@ export const createSale = [
   validateRequest,
   async (req, res, next) => {
     try {
-      const { products, payment, user, iva, ruc, status, stage, mode, customerName } = req.body;
-      console.log(customerName)
+      const {
+        products,
+        payment = [],
+        user,
+        ruc,
+        customerName,
+        status = 'pending',
+        stage = 'processed',
+        mode = 'local',
+        invoiceNumber,
+        invoiceType,
+        creditTerm,
+        documentType,
+        timbradoNumber,
+        timbradoExpiration
+      } = req.body;
+
       const totalAmount = products.reduce((sum, p) => sum + p.totalPrice, 0);
 
       const newSale = new Sale({
         products,
         totalAmount,
-        payment: payment || [],
+        payment,
         user,
         ruc,
         customerName,
-        iva,
-        status: status || 'pending',
-        stage: stage || 'processed',
-        mode: mode || 'local'
+        status,
+        stage,
+        mode,
+        invoiceNumber,
+        invoiceType,
+        creditTerm,
+        documentType,
+        timbradoNumber,
+        timbradoExpiration
       });
 
       await newSale.save();
@@ -126,25 +142,15 @@ export const createSale = [
         totalAmount
       });
 
-      
+      // Impresión de ticket o cocina
+      const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
       if (newSale.status === 'completed') {
-        try {
-          const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
-          await imprimirVenta(saleWithUser.toObject(), 'MP-4200 TH');
-          logger.info(`Ticket impreso para la venta ${newSale._id}`);
-        } catch (printError) {
-          logger.error(`Error imprimiendo ticket para venta ${newSale._id}: ${printError.message}`);
-        }
+        await imprimirVenta(saleWithUser.toObject(), 'MP-4200 TH');
+        logger.info(`Ticket impreso para la venta ${newSale._id}`);
       } else {
-        try {
-          const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
-          await imprimirOrdenCocina(saleWithUser.toObject(), 'MP-4200 TH'); 
-          logger.info(`Orden de cocina impresa para la venta ${newSale._id}`);
-        } catch (printError) {
-          logger.error(`Error imprimiendo orden de cocina ${newSale._id}: ${printError.message}`);
-        }
+        await imprimirOrdenCocina(saleWithUser.toObject(), 'MP-4200 TH');
+        logger.info(`Orden de cocina impresa para la venta ${newSale._id}`);
       }
-
 
       res.status(201).json({
         success: true,
@@ -158,14 +164,12 @@ export const createSale = [
         }
       });
     } catch (error) {
-      logger.error(`Error al crear venta: ${error.message}`, {
-        body: req.body,
-        stack: error.stack
-      });
+      logger.error(`Error al crear venta: ${error.message}`, { body: req.body });
       next(error);
     }
   }
 ];
+
 
 export const getSales = async (req, res, next) => {
   try {
@@ -356,7 +360,6 @@ export const updateSale = [
       ).populate('user', 'name').lean();
 
       if (!sale) {
-        logger.warn(`Venta no encontrada para actualización: ${req.params.id}`);
         const error = new Error('Venta no encontrada');
         error.statusCode = 404;
         throw error;
@@ -364,6 +367,7 @@ export const updateSale = [
 
       logger.info(`Venta actualizada: ${sale._id}`);
 
+      // Impresión si se completó
       if (sale.status === 'completed') {
         try {
           await imprimirVenta(sale, 'MP-4200 TH');
@@ -379,13 +383,12 @@ export const updateSale = [
         data: sale
       });
     } catch (error) {
-      logger.error(`Error al actualizar venta: ${error.message}`, {
-        saleId: req.params.id
-      });
+      logger.error(`Error al actualizar venta: ${error.message}`, { saleId: req.params.id });
       next(error);
     }
   }
 ];
+
 
 
 export const deleteSale = [
@@ -591,7 +594,7 @@ export const exportSalesToExcel = async (req, res, next) => {
 
     // Configurar respuesta HTTP
     const filename = `ventas_${startDate || 'todas'}_${endDate || 'todas'}_${new Date().toISOString().split('T')[0]}.xlsx`;
-    
+
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -603,9 +606,9 @@ export const exportSalesToExcel = async (req, res, next) => {
 
     // Escribir el archivo al response
     await workbook.xlsx.write(res);
-    
+
     console.log(`Exportadas ${sales.length} ventas exitosamente`);
-    
+
     res.end();
   } catch (error) {
     console.error('Error al exportar ventas:', error);
