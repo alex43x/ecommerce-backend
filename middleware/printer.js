@@ -2,157 +2,201 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import pkg from 'pdf-to-printer';
 import logger from '../config/logger.js';
+
 const { print } = pkg;
 
 const TICKET_PATH = './ticket.pdf';
 
 const translateMode = {
-    local: 'En local',
-    carry: 'Para llevar',
-    delivery: 'Delivery'
+  local: 'En local',
+  carry: 'Para llevar',
+  delivery: 'Delivery'
 };
 
-// Constantes de diseño para cálculo de altura
-const LINE_HEIGHT_RATIO = 1.15; // Factor de espacio entre líneas
-const FONT_SIZE_REGULAR = 9;
-const FONT_SIZE_LARGE = 10;
-const PAGE_WIDTH = 210; // Ancho útil después de márgenes
 const MARGIN = 2;
-const IMAGE_HEIGHT = 50; // Altura estimada del logo
+const IMAGE_HEIGHT = 50;
 
+/**
+ * Ajuste horario Paraguay
+ */
 function restar3HorasYFormatear(fechaISO) {
-    const fecha = new Date(fechaISO);
-    fecha.setUTCHours(fecha.getUTCHours() - 3);
-    return fecha.toLocaleString('es-ES', {
-        timeZone: 'UTC',
-        day: 'numeric',
-        month: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-    });
+  const fecha = new Date(fechaISO);
+  fecha.setUTCHours(fecha.getUTCHours() - 3);
+  return fecha.toLocaleString('es-PY', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
 }
 
 /**
- * Calcula la altura necesaria sin crear un PDF temporal
- */
-/**
- * Calcula la altura necesaria - versión optimizada y precisa
+ * Altura dinámica del ticket
  */
 function calcularAlturaNecesaria(sale) {
-    // Constantes de altura
-    const ALTURA_LINEA_REGULAR = 10.35; // 9 * 1.15
-    const ALTURA_LINEA_LARGE = 11.5;    // 10 * 1.15
+  let altura = 230;
 
-    let alturaTotal = 230; // Ajusta este valor según pruebas
+  altura += sale.products.length * 12;
 
-    // Agregar altura de productos
-    alturaTotal += ALTURA_LINEA_REGULAR * sale.products.length;
+  if (sale.payment?.length) {
+    altura += 20 + sale.payment.length * 10;
+  }
 
-    // Agregar altura de métodos de pago si existen
-    if (sale.payment?.length) {
-        alturaTotal += ALTURA_LINEA_LARGE; // Título
-        alturaTotal += ALTURA_LINEA_REGULAR * sale.payment.length;
-    }
+  if (sale.invoiced) {
+    altura += 40;
+  }
 
-    // Asegurar un mínimo y redondear hacia arriba
-    return Math.ceil(alturaTotal);
+  return Math.ceil(altura);
 }
 
 /**
- * Genera el PDF del ticket con altura automática precisa
+ * Generar PDF del ticket
  */
 function generarPDFTicket(sale) {
-    return new Promise((resolve, reject) => {
-        const alturaCalculada = calcularAlturaNecesaria(sale);
-        const doc = new PDFDocument({
-            size: [226, alturaCalculada],
-            margin: MARGIN
-        });
+  return new Promise((resolve, reject) => {
+    const altura = calcularAlturaNecesaria(sale);
 
-        const stream = fs.createWriteStream(TICKET_PATH);
-        doc.pipe(stream);
-
-        const pageWidth = 226;
-        const imageWidth = 50;
-        const x = (pageWidth - imageWidth) / 2;
-
-        try {
-            doc.image('./assets/logo.png', x, undefined, {
-                width: imageWidth,
-                height: IMAGE_HEIGHT
-            });
-        } catch (error) {
-            // Si no hay logo, continuamos sin él
-            logger.warn('Logo no encontrado, continuando sin él');
-        }
-
-        doc.fontSize(10).text('Eso Que Te Gusta', { align: 'center' });
-        doc.fontSize(9).text('Oliva entre 14 de Mayo y 15 de Agosto', { align: 'center' });
-        doc.fontSize(9).text('Tel: 0991 401621', { align: 'center' });
-        doc.moveDown();
-
-        doc.fontSize(10).text('Comprobante de Pago', { align: 'center' });
-
-        doc.fontSize(8).text(`RUC: ${sale.ruc}  Código: ${sale.dailyId} `); 
-        doc.text(`${sale.customerName}`);
-        doc.text(`Fecha: ${restar3HorasYFormatear(sale.date)}`);
-        doc.text(`Vendedor: ${sale.user?.name || '---'}  Consumo: ${translateMode[sale.mode]}`);
-
-        doc.moveDown();
-        doc.fontSize(10).text('Detalle:', { underline: true });
-
-        sale.products.forEach(p => {
-            const totalGs = p.totalPrice.toLocaleString("es-PY");
-            doc.fontSize(9)
-                .text(`${p.quantity} x ${p.name}`, { continued: true })
-                .text(`${totalGs} Gs`, { align: 'right' });
-        });
-
-        doc.text('---------------------------------------------------------', { align: 'center' });
-
-        const roundedSubtotal = Math.round(sale.totalAmount / 1.1);
-        doc.fontSize(8).text(`Subtotal: ${roundedSubtotal.toLocaleString("es-PY")} Gs    IVA 10%: ${sale.iva.toLocaleString("es-PY")} Gs`);
-        doc.fontSize(10).text(`Total: ${sale.totalAmount.toLocaleString("es-PY")} Gs`);
-
-        doc.text('---------------------------------------------------------', { align: 'center' });
-
-        if (sale.payment?.length) {
-            doc.fontSize(9).text('Método(s) de Pago:');
-            sale.payment.forEach(p => {
-                const metodo = {
-                    cash: 'Efectivo',
-                    card: 'Tarjeta',
-                    qr: 'QR',
-                    transfer: 'Transferencia'
-                }[p.paymentMethod] || p.paymentMethod;
-
-                doc.fontSize(8).text(`- ${metodo}: ${p.totalAmount.toLocaleString("es-PY")} Gs`);
-            });
-        }
-
-        doc.moveDown();
-        doc.fontSize(9).text('¡Gracias por su compra, vuelva pronto!', { align: 'center' });
-
-        doc.end();
-
-        stream.on('finish', resolve);
-        stream.on('error', reject);
+    const doc = new PDFDocument({
+      size: [226, altura],
+      margin: MARGIN
     });
+
+    const stream = fs.createWriteStream(TICKET_PATH);
+    doc.pipe(stream);
+
+    const pageWidth = 226;
+    const imageWidth = 50;
+    const x = (pageWidth - imageWidth) / 2;
+
+    try {
+      doc.image('./assets/logo.png', x, undefined, {
+        width: imageWidth,
+        height: IMAGE_HEIGHT
+      });
+    } catch {
+      logger.warn('Logo no encontrado, se continúa sin logo');
+    }
+
+    // ENCABEZADO
+    doc.fontSize(10).text('Eso Que Te Gusta', { align: 'center' });
+    doc.fontSize(9).text('Oliva entre 14 de Mayo y 15 de Agosto', { align: 'center' });
+    doc.fontSize(9).text('Tel: 0991 401621', { align: 'center' });
+    doc.moveDown(0.5);
+
+    /*doc.fontSize(10).text(
+      sale.invoiced ? 'FACTURA' : 'COMPROBANTE DE PAGO',
+      { align: 'center' }
+    );*/
+    doc.fontSize(10).text('TICKET DE VENTA', { align: 'center' });
+
+    doc.moveDown(0.5);
+
+    doc.fontSize(8);
+    doc.text(`Cliente: ${sale.customerName}`);
+    doc.text(`RUC: ${sale.ruc}`);
+    doc.text(`Orden #: ${sale.dailyId}`);
+    doc.text(`Fecha: ${restar3HorasYFormatear(sale.date)}`);
+    doc.text(`Vendedor: ${sale.user?.name || '---'}`);
+    doc.text(`Consumo: ${translateMode[sale.mode]}`);
+
+    // DATOS DE FACTURA / TIMBRADO
+    /*
+    if (sale.invoiced) {
+      doc.moveDown(0.3);
+      doc.text(`Factura N°: ${sale.invoiceNumber}`);
+      doc.text(`Timbrado: ${sale.timbradoNumber}`);
+      doc.text(`Vence: ${new Date(sale.timbradoIn).toLocaleDateString('es-PY')}`);
+    }*/
+
+    doc.moveDown();
+    doc.fontSize(9).text('DETALLE', { underline: true });
+
+    // PRODUCTOS
+    sale.products.forEach(p => {
+      doc.fontSize(8)
+        .text(`${p.quantity} x ${p.name}`, { continued: true })
+        .text(`${p.totalPrice.toLocaleString('es-PY')} Gs`, { align: 'right' });
+    });
+
+    doc.text('----------------------------------------------', { align: 'center' });
+
+    // TOTALES FISCALES
+    doc.fontSize(8);
+
+    if (sale.totals.gravada10 > 0) {
+      doc.text(`Gravada 10%: ${Math.round(sale.totals.gravada10).toLocaleString('es-PY')} Gs`);
+      doc.text(`IVA 10%: ${Math.round(sale.totals.iva10).toLocaleString('es-PY')} Gs`);
+    }
+
+    if (sale.totals.gravada5 > 0) {
+      doc.text(`Gravada 5%: ${Math.round(sale.totals.gravada5).toLocaleString('es-PY')} Gs`);
+      doc.text(`IVA 5%: ${Math.round(sale.totals.iva5).toLocaleString('es-PY')} Gs`);
+    }
+
+    if (sale.totals.exenta > 0) {
+      doc.text(`Exenta: ${Math.round(sale.totals.exenta).toLocaleString('es-PY')} Gs`);
+    }
+
+    doc.moveDown(0.3);
+    doc.fontSize(10).text(
+      `TOTAL: ${Math.round(sale.totalAmount).toLocaleString('es-PY')} Gs`,
+      { align: 'right' }
+    );
+
+    doc.text('----------------------------------------------', { align: 'center' });
+
+    // MÉTODOS DE PAGO
+    if (sale.payment?.length) {
+      doc.fontSize(9).text('Pagos:');
+      sale.payment.forEach(p => {
+        const label = {
+          cash: 'Efectivo',
+          card: 'Tarjeta',
+          qr: 'QR',
+          transfer: 'Transferencia'
+        }[p.paymentMethod] || p.paymentMethod;
+
+        doc.fontSize(8).text(
+          `${label}: ${p.totalAmount.toLocaleString('es-PY')} Gs`
+        );
+      });
+    }
+
+    doc.moveDown();
+    doc.fontSize(9).text(
+      'Gracias por su compra',
+      { align: 'center' }
+    );
+
+    doc.end();
+
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
 }
 
+/**
+ * Enviar ticket a impresora
+ */
 export async function imprimirVenta(sale, printerName) {
-    try {
-        await generarPDFTicket(sale);
-        await print(TICKET_PATH, {
-            printer: printerName,
-            silent: true
-        });
-        logger.info("Ticket enviado a la impresora");
-    } catch (error) {
-        logger.error('Error imprimiendo el ticket:', error.message);
-        throw error;
-    }
+  try {
+    await generarPDFTicket(sale);
+    await print(TICKET_PATH, {
+      printer: printerName,
+      silent: true
+    });
+
+    logger.info('Ticket impreso correctamente', {
+      saleId: sale._id,
+      printer: printerName
+    });
+  } catch (error) {
+    logger.error('Error imprimiendo ticket', {
+      error: error.message,
+      saleId: sale?._id
+    });
+    throw error;
+  }
 }

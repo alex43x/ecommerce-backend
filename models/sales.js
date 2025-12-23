@@ -7,13 +7,13 @@ const saleSchema = new mongoose.Schema({
 
   // DATOS DE FACTURA
   invoiceNumber: { type: String }, // Número de factura (se genera al facturar)
-  invoiceType: { type: String, enum: ['contado', 'credito'], required: true },
-  creditTerm: { type: Number }, // solo crédito
-  documentType: { type: String, enum: ['electronic', 'printed'], required: true },
+  invoiceType: { type: String, enum: ['contado', 'credito'], default: 'contado' },
+  plazo: { type: Number, default: 0 }, // solo crédito
+  documentType: { type: String, enum: ['electronic', 'printed'], default: 'electronic' },
 
   // Datos del timbrado activo al facturar
   timbradoNumber: { type: String },   // código del timbrado
-  timbradoExpiration: { type: Date }, // fecha de expiración
+  timbradoInit: { type: Date }, // fecha de expiración
   timbrado: { type: mongoose.Schema.Types.ObjectId, ref: 'Timbrado' },
 
   invoiced: { type: Boolean, default: false }, // si la venta fue facturada
@@ -107,7 +107,7 @@ saleSchema.methods.facturar = async function() {
 
   this.invoiceNumber = factura.invoiceNumber;
   this.timbradoNumber = timbrado.code;
-  this.timbradoExpiration = timbrado.expiresAt;
+  this.timbradoInit = timbrado.issuedAt;
   this.timbrado = timbrado._id;
   this.invoiced = true;
 

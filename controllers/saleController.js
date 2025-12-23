@@ -3,6 +3,7 @@ import { body, param, validationResult } from 'express-validator';
 import { imprimirVenta } from '../middleware/printer.js';
 import { imprimirOrdenCocina } from '../middleware/order.js';
 import logger from '../config/logger.js';
+import Timbrado from '../models/timbrado.js';
 
 import mongoose from 'mongoose';
 import ExcelJS from 'exceljs';
@@ -82,15 +83,32 @@ export const idValidation = [
 
 export const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
+
   if (!errors.isEmpty()) {
+    const formattedErrors = errors.array().map(err => ({
+      field: err.param,
+      message: err.msg,
+      value: err.value
+    }));
+
+    // 🔴 LOG CLARO Y ÚTIL
+    logger.warn('Error de validación en request', {
+      path: req.originalUrl,
+      method: req.method,
+      errors: formattedErrors,
+      body: req.body
+    });
+
     return res.status(400).json({
       success: false,
       message: 'Errores de validación',
-      errors: errors.array()
+      errors: formattedErrors
     });
   }
+
   next();
 };
+
 
 export const createSale = [
   ...saleDataValidations,
@@ -106,17 +124,18 @@ export const createSale = [
         status = 'pending',
         stage = 'processed',
         mode = 'local',
-        invoiceNumber,
-        invoiceType,
+        invoiced = false,
+        invoiceType = 'contado',
         creditTerm,
-        documentType,
-        timbradoNumber,
-        timbradoExpiration
+        documentType = 'electronic'
       } = req.body;
 
-      const totalAmount = products.reduce((sum, p) => sum + p.totalPrice, 0);
+      const totalAmount = products.reduce(
+        (sum, p) => sum + p.totalPrice,
+        0
+      );
 
-      const newSale = new Sale({
+      const sale = new Sale({
         products,
         totalAmount,
         payment,
@@ -126,49 +145,78 @@ export const createSale = [
         status,
         stage,
         mode,
-        invoiceNumber,
         invoiceType,
         creditTerm,
         documentType,
-        timbradoNumber,
-        timbradoExpiration
+        invoiced: false // 🔴 siempre false al crear
       });
 
-      await newSale.save();
+      await sale.save();
 
-      logger.info(`Venta creada: ${newSale._id}`, {
-        saleId: newSale._id,
-        userId: user,
-        totalAmount
+      logger.info(`Venta creada`, {
+        saleId: sale._id,
+        totalAmount,
+        invoicedRequested: invoiced
       });
 
-      // Impresión de ticket o cocina
-      const saleWithUser = await Sale.findById(newSale._id).populate('user', 'name');
-      if (newSale.status === 'completed') {
-        await imprimirVenta(saleWithUser.toObject(), 'MP-4200 TH');
-        logger.info(`Ticket impreso para la venta ${newSale._id}`);
+      // 🧾 FACTURACIÓN AUTOMÁTICA SI SE SOLICITA
+      if (invoiced === true) {
+        try {
+          await sale.facturar();
+
+          logger.info(`Venta facturada`, {
+            saleId: sale._id,
+            invoiceNumber: sale.invoiceNumber,
+            timbrado: sale.timbradoNumber
+          });
+        } catch (facturaError) {
+          logger.error(
+            `Error al facturar venta ${sale._id}: ${facturaError.message}`
+          );
+
+          return res.status(400).json({
+            success: false,
+            message: facturaError.message
+          });
+        }
+      }
+
+      // Impresión
+      const saleWithUser = await Sale.findById(sale._id)
+        .populate('user', 'name')
+        .lean();
+
+      if (sale.status === 'completed' ) {
+        await imprimirVenta(saleWithUser, 'MP-4200 TH');
       } else {
-        await imprimirOrdenCocina(saleWithUser.toObject(), 'MP-4200 TH');
-        logger.info(`Orden de cocina impresa para la venta ${newSale._id}`);
+        await imprimirOrdenCocina(saleWithUser, 'MP-4200 TH');
       }
 
       res.status(201).json({
         success: true,
         message: 'Venta creada exitosamente',
         data: {
-          id: newSale._id,
-          totalAmount: newSale.totalAmount,
-          status: newSale.status,
-          stage: newSale.stage,
-          date: newSale.date
+          id: sale._id,
+          dailyId: sale.dailyId,
+          totalAmount: sale.totalAmount,
+          invoiced: sale.invoiced,
+          invoiceNumber: sale.invoiceNumber,
+          timbradoNumber: sale.timbradoNumber,
+          status: sale.status,
+          stage: sale.stage,
+          date: sale.date
         }
       });
     } catch (error) {
-      logger.error(`Error al crear venta: ${error.message}`, { body: req.body });
+      logger.error(`Error al crear venta`, {
+        error: error.message,
+        body: req.body
+      });
       next(error);
     }
   }
 ];
+
 
 
 export const getSales = async (req, res, next) => {
@@ -353,11 +401,7 @@ export const updateSale = [
   validateRequest,
   async (req, res, next) => {
     try {
-      const sale = await Sale.findByIdAndUpdate(
-        req.params.id,
-        req.body,
-        { new: true, runValidators: true }
-      ).populate('user', 'name').lean();
+      const sale = await Sale.findById(req.params.id);
 
       if (!sale) {
         const error = new Error('Venta no encontrada');
@@ -365,29 +409,75 @@ export const updateSale = [
         throw error;
       }
 
-      logger.info(`Venta actualizada: ${sale._id}`);
+      const wasInvoiced = sale.invoiced;
 
-      // Impresión si se completó
+      Object.assign(sale, req.body);
+
+      /**
+       * FACTURAR SOLO SI:
+       * - antes NO estaba facturada
+       * - ahora viene invoiced = true
+       * - status es completed
+       */
+      if (
+        !wasInvoiced &&
+        sale.invoiced === true &&
+        sale.status === 'completed'
+      ) {
+        const now = new Date();
+
+        const timbrado = await Timbrado.findOne({
+          issuedAt: { $lte: now },
+          expiresAt: { $gte: now }
+        }).sort({ issuedAt: 1 });
+
+        if (!timbrado) {
+          const error = new Error('No hay timbrado activo');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const factura = await timbrado.generateInvoice(sale._id);
+
+        sale.invoiceNumber = factura.invoiceNumber;
+        sale.timbradoNumber = timbrado.code;
+        sale.timbradoInit = timbrado.issuedAt
+        sale.timbrado = timbrado._id;
+      }
+
+      await sale.save();
+
+      const populatedSale = await Sale.findById(sale._id)
+        .populate('user', 'name')
+        .lean();
+
+      // 🖨 Impresión
       if (sale.status === 'completed') {
         try {
-          await imprimirVenta(sale, 'MP-4200 TH');
-          logger.info(`Ticket impreso para la venta ${sale._id}`);
-        } catch (printError) {
-          logger.error(`Error imprimiendo ticket para venta ${sale._id}: ${printError.message}`);
+          await imprimirVenta(populatedSale, 'MP-4200 TH');
+        } catch (e) {
+          logger.error(
+            `Error imprimiendo venta ${sale._id}: ${e.message}`
+          );
         }
       }
 
       res.status(200).json({
         success: true,
         message: 'Venta actualizada exitosamente',
-        data: sale
+        data: populatedSale
       });
+
     } catch (error) {
-      logger.error(`Error al actualizar venta: ${error.message}`, { saleId: req.params.id });
+      logger.error(
+        `Error al actualizar venta: ${error.message}`,
+        { saleId: req.params.id }
+      );
       next(error);
     }
   }
 ];
+
 
 
 

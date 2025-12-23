@@ -59,12 +59,8 @@ function generarPDFCocina(sale) {
     return new Promise((resolve, reject) => {
 
         let alturaCalculada = calcularAlturaCocina(sale);
+        if (alturaCalculada < MIN_ALTURA) alturaCalculada = MIN_ALTURA;
 
-        if (alturaCalculada < MIN_ALTURA) {
-            alturaCalculada = MIN_ALTURA;
-        }
-
-        // *** CORREGIDO: ancho primero, alto después ***
         const doc = new PDFDocument({
             size: [PAGE_WIDTH, alturaCalculada],
             margin: 0
@@ -88,8 +84,8 @@ function generarPDFCocina(sale) {
         doc.fontSize(FONT_SIZE_REGULAR)
             .text(`RUC: ${sale.ruc}    N° Orden: ${sale.dailyId}`);
 
-        doc.text(`Cliente: ${sale.customerName}`);
-        
+        doc.text(`Cliente: ${sale.customerName || '---'}`);
+
         doc.fontSize(FONT_SIZE_SMALL)
             .text(`Fecha: ${restar3HorasYFormatear(sale.date)}`);
 
@@ -113,13 +109,9 @@ function generarPDFCocina(sale) {
         // Separador
         doc.text('----------------------------------------------', { align: 'center' });
 
-        const roundedSubtotal = Math.round(sale.totalAmount / 1.1);
-
-        // Totales
-        doc.fontSize(FONT_SIZE_SMALL)
-            .text(
-                `Subtotal: ${roundedSubtotal.toLocaleString('es-PY')} Gs    IVA 10%: ${sale.iva.toLocaleString('es-PY')} Gs`
-            );
+        /**
+         * Totales correctamente calculados
+         */
 
         doc.fontSize(FONT_SIZE_REGULAR)
             .text(`Total: ${sale.totalAmount.toLocaleString('es-PY')} Gs`);
@@ -136,7 +128,6 @@ export async function imprimirOrdenCocina(sale, printerName) {
     try {
         await generarPDFCocina(sale);
 
-        // *** CORREGIDO: NO usar orientation, causa rotación ***
         await print(KITCHEN_TICKET_PATH, {
             printer: printerName,
             silent: true,

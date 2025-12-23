@@ -8,7 +8,6 @@ export const timbradoValidations = [
   body("code")
     .isLength({ min: 8, max: 8 })
     .withMessage("El timbrado debe tener 8 dígitos"),
-  
 ];
 
 export const validateTimbradoRequest = (req, res, next) => {
@@ -32,7 +31,7 @@ export const createTimbrado = async (req, res, next) => {
 
     const now = new Date();
 
-    // NO permitir otro activo
+    // NO permitir otro timbrado activo
     const activeExists = await Timbrado.findOne({
       issuedAt: { $lte: now },
       expiresAt: { $gte: now },
@@ -54,15 +53,24 @@ export const createTimbrado = async (req, res, next) => {
       });
     }
 
+    // 🔹 AJUSTE CLAVE: expiración a 23:59:59.999
+    const issuedDate = new Date(issuedAt);
+    const expirationDate = new Date(expiresAt);
+    expirationDate.setHours(23, 59, 59, 999);
+    expirationDate.setDate(expirationDate.getDate() + 1); // incluir todo el día 
+
     const timbrado = new Timbrado({
       code,
-      issuedAt,
-      expiresAt,
+      issuedAt: issuedDate,
+      expiresAt: expirationDate,
     });
 
     await timbrado.save();
 
-    logger.info(`Timbrado creado: ${code}`);
+    logger.info(`Timbrado creado: ${code}`, {
+      issuedAt: issuedDate,
+      expiresAt: expirationDate,
+    });
 
     res.status(201).json({
       success: true,
