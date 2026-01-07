@@ -1,6 +1,7 @@
 import Sale from '../models/sales.js';
 import { body, param, validationResult } from 'express-validator';
 import { imprimirVenta } from '../middleware/printer.js';
+import { imprimirFacturaDesdeURL } from '../middleware/factura.js';
 import { imprimirOrdenCocina } from '../middleware/order.js';
 import logger from '../config/logger.js';
 import Timbrado from '../models/timbrado.js';
@@ -148,7 +149,7 @@ export const createSale = [
         invoiceType,
         creditTerm,
         documentType,
-        invoiced: false // 🔴 siempre false al crear
+        invoiced: false // siempre false al crear
       });
 
       await sale.save();
@@ -159,16 +160,10 @@ export const createSale = [
         invoicedRequested: invoiced
       });
 
-      // 🧾 FACTURACIÓN AUTOMÁTICA SI SE SOLICITA
+      // FACTURACIÓN AUTOMÁTICA
       if (invoiced === true) {
         try {
           await sale.facturar();
-
-          logger.info(`Venta facturada`, {
-            saleId: sale._id,
-            invoiceNumber: sale.invoiceNumber,
-            timbrado: sale.timbradoNumber
-          });
         } catch (facturaError) {
           logger.error(
             `Error al facturar venta ${sale._id}: ${facturaError.message}`
@@ -181,13 +176,25 @@ export const createSale = [
         }
       }
 
-      // Impresión
+      // 🔽 IMPRESIÓN
       const saleWithUser = await Sale.findById(sale._id)
         .populate('user', 'name')
         .lean();
-
-      if (sale.status === 'completed' ) {
-        await imprimirVenta(saleWithUser, 'MP-4200 TH');
+/*
+      if (sale.status === 'completed') {
+        if (sale.invoiced === true) {
+          const facturaUrl = `http://100.110.139.64:4000/facturas/695b95c024a7e012b6ac76cb/pdf`;
+          await imprimirFacturaDesdeURL(facturaUrl, 'MP-4200 TH');
+        } else {
+          await imprimirVenta(saleWithUser, 'MP-4200 TH');
+        }
+      } else {
+        await imprimirOrdenCocina(saleWithUser, 'MP-4200 TH');
+      }*/
+      if (sale.status === 'completed') {
+        if (sale.invoiced === false) {
+          await imprimirVenta(saleWithUser, 'MP-4200 TH');
+        }
       } else {
         await imprimirOrdenCocina(saleWithUser, 'MP-4200 TH');
       }
@@ -441,7 +448,7 @@ export const updateSale = [
 
         sale.invoiceNumber = factura.invoiceNumber;
         sale.timbradoNumber = timbrado.code;
-        sale.timbradoInit = timbrado.issuedAt
+        sale.timbradoInit = timbrado.issuedAt;
         sale.timbrado = timbrado._id;
       }
 
@@ -451,10 +458,21 @@ export const updateSale = [
         .populate('user', 'name')
         .lean();
 
-      // 🖨 Impresión
+      // 🖨 IMPRESIÓN
       if (sale.status === 'completed') {
         try {
-          await imprimirVenta(populatedSale, 'MP-4200 TH');
+          if (sale.invoiced === true && sale.invoiceNumber) {
+            const facturaUrl = `http://100.110.139.64:4000/facturas/${sale._id}/pdf`;
+            await imprimirFacturaDesdeURL(
+              facturaUrl,
+              'MP-4200 TH'
+            );
+          } else {
+            await imprimirVenta(
+              populatedSale,
+              'MP-4200 TH'
+            );
+          }
         } catch (e) {
           logger.error(
             `Error imprimiendo venta ${sale._id}: ${e.message}`

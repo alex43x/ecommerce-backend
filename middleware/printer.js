@@ -44,9 +44,7 @@ function calcularAlturaNecesaria(sale) {
     altura += 20 + sale.payment.length * 10;
   }
 
-  if (sale.invoiced) {
-    altura += 40;
-  }
+
 
   return Math.ceil(altura);
 }
@@ -95,8 +93,7 @@ function generarPDFTicket(sale) {
 
     doc.fontSize(8);
     doc.text(`Cliente: ${sale.customerName}`);
-    doc.text(`RUC: ${sale.ruc}`);
-    doc.text(`Orden #: ${sale.dailyId}`);
+    doc.text(`RUC: ${sale.ruc} Orden #: ${sale.dailyId}`);
     doc.text(`Fecha: ${restar3HorasYFormatear(sale.date)}`);
     doc.text(`Vendedor: ${sale.user?.name || '---'}`);
     doc.text(`Consumo: ${translateMode[sale.mode]}`);
@@ -147,28 +144,7 @@ function generarPDFTicket(sale) {
 
     doc.text('----------------------------------------------', { align: 'center' });
 
-    // MÉTODOS DE PAGO
-    if (sale.payment?.length) {
-      doc.fontSize(9).text('Pagos:');
-      sale.payment.forEach(p => {
-        const label = {
-          cash: 'Efectivo',
-          card: 'Tarjeta',
-          qr: 'QR',
-          transfer: 'Transferencia'
-        }[p.paymentMethod] || p.paymentMethod;
 
-        doc.fontSize(8).text(
-          `${label}: ${p.totalAmount.toLocaleString('es-PY')} Gs`
-        );
-      });
-    }
-
-    doc.moveDown();
-    doc.fontSize(9).text(
-      'Gracias por su compra',
-      { align: 'center' }
-    );
 
     doc.end();
 
