@@ -180,17 +180,17 @@ export const createSale = [
       const saleWithUser = await Sale.findById(sale._id)
         .populate('user', 'name')
         .lean();
-/*
-      if (sale.status === 'completed') {
-        if (sale.invoiced === true) {
-          const facturaUrl = `http://100.110.139.64:4000/facturas/695b95c024a7e012b6ac76cb/pdf`;
-          await imprimirFacturaDesdeURL(facturaUrl, 'MP-4200 TH');
-        } else {
-          await imprimirVenta(saleWithUser, 'MP-4200 TH');
-        }
-      } else {
-        await imprimirOrdenCocina(saleWithUser, 'MP-4200 TH');
-      }*/
+      /*
+            if (sale.status === 'completed') {
+              if (sale.invoiced === true) {
+                const facturaUrl = `http://100.110.139.64:4000/facturas/695b95c024a7e012b6ac76cb/pdf`;
+                await imprimirFacturaDesdeURL(facturaUrl, 'MP-4200 TH');
+              } else {
+                await imprimirVenta(saleWithUser, 'MP-4200 TH');
+              }
+            } else {
+              await imprimirOrdenCocina(saleWithUser, 'MP-4200 TH');
+            }*/
       if (sale.status === 'completed') {
         if (sale.invoiced === false) {
           await imprimirVenta(saleWithUser, 'MP-4200 TH');
@@ -240,20 +240,45 @@ export const getSales = async (req, res, next) => {
       ruc,
       product,
     } = req.query;
+
     const query = {};
 
     if (user) query.user = user;
-    if (status && status !== "all") query.status = status;
     if (dailyId) query.dailyId = dailyId;
+
     if (paymentMethod) {
       query.payment = { $elemMatch: { paymentMethod } };
     }
+
     if (ruc) query.ruc = { $regex: ruc, $options: "i" };
+
     if (product) {
       query["products.name"] = { $regex: product, $options: "i" };
     }
 
-    if (startDate && endDate) {
+    // ===== STATUS HISTORIC =====
+    if (status === "historic") {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(23, 59, 59, 999);
+
+      const twoMonthsAgo = new Date(yesterday);
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      twoMonthsAgo.setHours(0, 0, 0, 0);
+
+      query.status = { $in: ["pending", "ordered"] };
+      query.date = {
+        $gte: twoMonthsAgo,
+        $lte: yesterday,
+      };
+    }
+    // ===== STATUS NORMAL =====
+    else if (status && status !== "all") {
+      query.status = status;
+    }
+
+    // ===== FECHAS MANUALES (solo si NO es historic) =====
+    if (startDate && endDate && status !== "historic") {
       const localToUTC = (date, isStart) => {
         const d = new Date(date);
         if (isStart) {
@@ -288,11 +313,11 @@ export const getSales = async (req, res, next) => {
         .limit(parsedLimit)
         .populate("user", "name")
         .lean(),
-      Sale.countDocuments(query)
+      Sale.countDocuments(query),
     ]);
 
     logger.debug(`Obtenidas ${sales.length} ventas de ${totalSales}`, {
-      queryParams: req.query
+      queryParams: req.query,
     });
 
     res.status(200).json({
@@ -302,15 +327,16 @@ export const getSales = async (req, res, next) => {
       totalPages: Math.ceil(totalSales / parsedLimit),
       currentPage: parseInt(page),
       itemsPerPage: parsedLimit,
-      data: sales
+      data: sales,
     });
   } catch (error) {
     logger.error(`Error al obtener ventas: ${error.message}`, {
-      queryParams: req.query
+      queryParams: req.query,
     });
     next(error);
   }
 };
+
 
 export const updateSaleStatus = [
   ...idValidation,
