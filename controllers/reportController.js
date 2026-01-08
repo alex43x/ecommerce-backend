@@ -43,7 +43,7 @@ function parseDateRange(startDate, endDate, defaultDays = 30) {
   return { start, end };
 }
 
-// ✅ Ventas totales del día, semana y mes (basado en pagos reales)
+//  Ventas totales del día, semana y mes (basado en pagos reales)
 export const getSalesTotalAllPeriods = async (req, res, next) => {
   try {
     const now = new Date();
@@ -170,59 +170,119 @@ export const getSalesByDayLast7Days = async (req, res, next) => {
   }
 };
 
+const getSalesByPaymentMethodData = async (start, end) => {
+  return Sale.aggregate([
+    {
+      $match: {
+        status: { $nin: [ "annulled","canceled"] },
+        date: { $gte: start, $lte: end }
+      }
+    },
+    { $unwind: "$payment" },
+    {
+      $group: {
+        _id: "$payment.paymentMethod",
+        totalSales: { $sum: "$payment.totalAmount" },
+        transactionCount: { $sum: 1 }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        paymentMethod: "$_id",
+        totalSales: 1,
+        transactionCount: 1
+      }
+    },
+    { $sort: { paymentMethod: 1 } }
+  ]);
+};
 
+// Nueva función para obtener pagos de ventas canceladas
+const getCanceledSalesPayments = async (start, end) => {
+  const result = await Sale.aggregate([
+    {
+      $match: {
+        status: "canceled",
+        date: { $gte: start, $lte: end }
+      }
+    },
+    { $unwind: "$payment" },
+    {
+      $group: {
+        _id: null,
+        totalCanceledPayments: { $sum: "$payment.totalAmount" }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        totalCanceledPayments: 1
+      }
+    }
+  ]);
 
-// ✅ Ventas por método de pago (basado en pagos reales)
+  return result[0]?.totalCanceledPayments || 0;
+};
+
+//  Ventas por método de pago (basado en pagos reales)
 export const getSalesByPaymentMethod = async (req, res, next) => {
-  const { startDate, endDate } = req.query;
-  const { start, end } = parseDateRange(startDate, endDate);
-  
   try {
-    const sales = await Sale.aggregate([
+    const { startDate, endDate } = req.query;
+    const { start, end } = parseDateRange(startDate, endDate);
+
+    const sales = await getSalesByPaymentMethodData(start, end);
+
+    res.status(200).json({
+      success: true,
+      data: sales
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getTotalSalesByDay = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const { start, end } = parseDateRange(startDate, endDate);
+
+    const result = await Sale.aggregate([
       {
         $match: {
-          status: { $ne: "annulled" },
+          status: { $nin: [ "annulled"] },
           date: { $gte: start, $lte: end }
         }
       },
-      { $unwind: "$payment" },
       {
         $group: {
-          _id: "$payment.paymentMethod",
-          totalSales: { $sum: "$payment.totalAmount" },
-          transactionCount: { $sum: 1 }
+          _id: null,
+          totalSales: { $sum: "$totalAmount" },
+          count: { $sum: 1 }
         }
       },
       {
         $project: {
           _id: 0,
           totalSales: 1,
-          transactionCount: 1,
-          paymentMethod: "$_id"
+          count: 1
         }
-      },
-      {
-        $sort: { paymentMethod: 1 }
       }
     ]);
-    
+
     res.status(200).json({
       success: true,
-      data: sales
+      data: result[0] || { totalSales: 0, count: 0 }
     });
   } catch (error) {
-    logger.error`Error en getSalesByPaymentMethod: ${error.message}`, {
-      queryParams: req.query,
-      stack: error.stack
-    };
     next(error);
   }
 };
 
-// ✅ Cierre de caja por día (basado en pagos reales) agrupado por status
 export const getCashClosingByDay = async (req, res, next) => {
   try {
     const { day } = req.query;
+
     if (!day) {
       return res.status(400).json({
         success: false,
@@ -234,62 +294,71 @@ export const getCashClosingByDay = async (req, res, next) => {
     const end = new Date(start);
     end.setDate(start.getDate() + 1);
 
-    // Pipeline de agregación modificado para agrupar por status
-    const result = await Sale.aggregate([
+    // Totales por método de pago (solo ventas no canceladas)
+    const paymentTotals = await getSalesByPaymentMethodData(start, end);
+
+    // Total pagado (suma de todos los métodos de ventas no canceladas)
+    const paidTotal = paymentTotals.reduce(
+      (sum, p) => sum + p.totalSales,
+      0
+    );
+
+    // Total de pagos en ventas canceladas
+    const canceledPayments = await getCanceledSalesPayments(start, end);
+    console.log(canceledPayments)
+
+    // Total general de ventas (sale.totalAmount) - solo no canceladas
+    const totalSalesAgg = await Sale.aggregate([
       {
         $match: {
-          status: { $ne: "annulled" },
+          status: { $nin: ["canceled", "annulled"] },
           date: { $gte: start, $lt: end }
         }
       },
-      { $unwind: "$payment" }, // Descomponer los pagos
       {
         $group: {
-          _id: "$status", // Agrupar por status en lugar de paymentMethod
-          paymentMethods: {
-            $push: {
-              method: "$payment.paymentMethod",
-              amount: "$payment.totalAmount"
-            }
-          },
-          totalAmount: { $sum: "$payment.totalAmount" },
-          totalIVA: { $sum: "$iva" },
-          count: { $sum: 1 },
+          _id: null,
+          totalSales: { $sum: "$totalAmount" }
         }
       },
       {
         $project: {
           _id: 0,
-          status: "$_id",
-          paymentMethods: 1,
-          totalAmount: 1,
-          totalIVA: 1,
-          count: 1,
+          totalSales: 1
         }
-      },
-      { $sort: { status: 1 } } // Ordenar por status
+      }
     ]);
 
-    // Calcular totales generales
-    const totals = result.reduce((acc, curr) => {
-      acc.totalAmount += curr.totalAmount;
-      acc.totalIVA += curr.totalIVA;
-      acc.totalCount += curr.count;
-      return acc;
-    }, { totalAmount: 0, totalIVA: 0, totalCount: 0 });
+    const totalSales = totalSalesAgg[0]?.totalSales || 0;
+
+    // Diferencia pendiente
+    const pending = totalSales - paidTotal;
+
+    console.log({
+      totalSales,
+      paidTotal,
+      pending,
+      canceledPayments,
+      paymentTotals
+    });
 
     res.status(200).json({
       success: true,
-      data: {
-        details: result,
-        totals
-      }
+      data: [
+        {
+          type: "byPaymentMethod",
+          data: paymentTotals
+        },
+        {
+          type: "totals",
+          totalSales,
+          paidTotal,
+          pending,
+          canceledPayments  // Nuevo campo
+        }
+      ]
     });
   } catch (error) {
-    logger.error(`Error en getCashClosingByDay: ${error.message}`, {
-      queryParams: req.query,
-      stack: error.stack
-    });
     next(error);
   }
 };
@@ -302,7 +371,7 @@ export const getSalesByCategory = async (req, res, next) => {
     const sales = await Sale.aggregate([
       {
         $match: {
-          status: {$in:["completed","ordered"]} ,
+          status: { $in: ["completed", "ordered"] },
           date: { $gte: start, $lte: end }
         }
       },
@@ -347,7 +416,7 @@ export const getSalesByCategory = async (req, res, next) => {
   }
 };
 
-// ✅ Ventas por vendedor (basado en pagos reales)
+//  Ventas por vendedor (basado en pagos reales)
 export const getSalesBySeller = async (req, res, next) => {
   const { startDate, endDate } = req.query;
   const { start, end } = parseDateRange(startDate, endDate);
@@ -402,7 +471,7 @@ export const getSalesBySeller = async (req, res, next) => {
   }
 };
 
-// ✅ Ventas por productos/variantes específicos
+//  Ventas por productos/variantes específicos
 export const getSalesByProducts = async (req, res, next) => {
   const { startDate, endDate, productIds } = req.query;
 
@@ -468,7 +537,7 @@ export const getSalesByProducts = async (req, res, next) => {
   }
 };
 
-// ✅ Ventas semanales por producto (últimas 8 semanas)
+//  Ventas semanales por producto (últimas 8 semanas)
 export const getWeeklySalesByProducts = async (req, res, next) => {
   const { productIds } = req.query;
 
